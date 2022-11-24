@@ -1,6 +1,9 @@
 # Packages that allow us to get information about objects:
 import asdf
 import os
+import numpy as np
+from astropy.table import Table
+from dlnpyutils import utils as dln,robust
 
 # Astropy tools:
 from astropy.io import fits
@@ -29,167 +32,14 @@ from jwst.photom.photom_step import PhotomStep
 from jwst.resample import ResampleSpecStep
 from jwst.cube_build.cube_build_step import CubeBuildStep
 from jwst.extract_1d.extract_1d_step import Extract1dStep
-from jwst.extract_1d import extract
+from jwst.extract_1d import jextract
+
+from doppler.spec1d import Spec1D
+from . import extract
 
 def reduce(files):
     """ This reduces the JWST NIRSpec MSA data """
     pass
-
-def profilefit(x,y):
-    """ Fit a spectral profile."""
-    flux = np.sum(np.maximum(y,0))
-    xmean = np.sum(x*np.maximum(y,0))/flux
-    xsig = np.sqrt(np.sum((x-xmean)**2 * np.maximum(y,0)/flux))
-    # Fit binned Gaussian
-    p0 = [np.max(y),xmean,xsig,0.0]
-    bnds = [np.array([p0[0]*0.5,xmean-1,0.5*xsig,-0.3*p0[0]]),
-            np.array([p0[0]*2,xmean+1,2*xsig,0.3*p0[0]])]
-    pars,cov = dln.gaussfit(x,y,initpar=p0,bounds=bnds,binned=True)
-    perror = np.sqrt(np.diag(cov))
-    return pars,perror
-    
-
-def tracing(im,ymid=None,step=50,nbin=50):
-    """ Trace a spectrum. Assumed to be in the horizontal direction."""
-    ny,nx = im.shape
-    y,x = np.arange(ny),np.arange(nx)
-    
-    # Find ymid if not input
-    if ymid is None:
-        tot = np.nanmedian(np.maximum(im[:,nx//2-50:nx//2+50],0),axis=1)
-        ymid = np.argmax(tot)
-        
-    # Trace using binned profiles, starting at middle
-    nsteps = (nx//2)//step
-    #if nsteps % 2 == 0: nsteps-=1
-    lasty = ymid
-    lastsig = 1.0
-    xmnarr = []
-    ymidarr = []
-    ysigarr = []
-    # Forwards
-    for i in range(nsteps):
-        xmn = nx//2 + i*step
-        xlo = xmn - nbin//2
-        xhi = xmn + nbin//2 + 1
-        profile = np.nanmedian(im[:,xlo:xhi],axis=1)
-        ind = np.argmax(profile)
-        ylo = int(np.floor(lasty-2.5*lastsig))
-        yhi = int(np.ceil(lasty+2.5*lastsig))
-        slc = slice(ylo,yhi+1)
-        profileclip = profile[slc]
-        profileclip /= np.sum(np.maximum(profileclip,0))  # normalize
-        yclip = y[slc]
-        pars,perror = profilefit(yclip,profileclip)
-        xmnarr.append(xmn)
-        ymidarr.append(pars[1])
-        ysigarr.append(pars[2])
-        # Remember
-        lasty = pars[1]
-        lastsig = pars[2]
-        
-    # Backwards
-    lasty = ymidarr[0]
-    lastsig = ysigarr[0]
-    for i in np.arange(1,nsteps):
-        xmn = nx//2 - i*step
-        xlo = xmn - nbin//2
-        xhi = xmn + nbin//2 + 1        
-        profile = np.nanmedian(im[:,xlo:xhi],axis=1)
-        ind = np.argmax(profile)
-        ylo = int(np.floor(lasty-2.5*lastsig))
-        yhi = int(np.ceil(lasty+2.5*lastsig))
-        slc = slice(ylo,yhi+1)
-        profileclip = profile[slc]
-        profileclip /= np.sum(np.maximum(profileclip,0))  # normalize
-        yclip = y[slc]
-        pars,perror = profilefit(yclip,profileclip)
-        xmnarr.append(xmn)
-        ymidarr.append(pars[1])
-        ysigarr.append(pars[2])
-        # Remember
-        lasty = pars[1]
-        lastsig = pars[2]
-
-    #xmnarr = np.array(xmnarr)
-    #ymidarr = np.array(ymidarr)
-    #ysigarr = np.array(ysigarr)
-    ttab = Table((xmnarr,ymidarr,ysigarr),names=['x','y','ysig'])
-    ttab.sort('x')
-        
-    return ttab
-        
-    
-def extract_optimal(im,ytrace,imerr=None,verbose=False,off=10,backoff=50,smlen=31):
-    """ Extract a spectrum using optimal extraction (Horne 1986)"""
-    ny,nx = im.shape
-    yest = np.median(ytrace)
-    # Get the subo,age
-    yblo = int(np.maximum(yest-backoff,0))
-    ybhi = int(np.minimum(yest+backoff,ny))
-    nback = ybhi-yblo
-    # Background subtract
-    med = np.median(im[yblo:ybhi,:],axis=0)
-    medim = np.zeros(nback).reshape(-1,1) + med.reshape(1,-1)
-    subim = im[yblo:ybhi,:]-medim
-    suberr = imerr[yblo:ybhi,:]
-    # Make sure the arrays are float64
-    subim = subim.astype(float)
-    suberr = suberr.astype(float)    
-    # Mask other parts of the image
-    ylo = ytrace-off - yblo
-    yhi = ytrace+off - yblo
-    yy = np.arange(nback).reshape(-1,1)+np.zeros(nx)
-    mask = (yy >= ylo) & (yy <= yhi)
-    sim = subim*mask
-    serr = suberr*mask
-    badpix = (serr <= 0)
-    serr[badpix] = 1e20
-    # Compute the profile/probability matrix from the image
-    tot = np.sum(np.maximum(sim,0),axis=0)
-    tot[(tot<=0) | ~np.isfinite(tot)] = 1
-    psf1 = np.maximum(sim,0)/tot
-    psf = np.zeros(psf1.shape,float)
-    for i in range(nback):
-        psf[i,:] = utils.medfilt(psf1[i,:],smlen)
-        #psf[i,:] = utils.gsmooth(psf1[i,:],smlen)        
-    psf[(psf<0) | ~np.isfinite(psf)] = 0
-    totpsf = np.sum(psf,axis=0)
-    totpsf[(totpsf<=0) | (~np.isfinite(totpsf))] = 1
-    psf /= totpsf
-    psf[(psf<0) | ~np.isfinite(psf)] = 0
-    # Compute the weights
-    wt = psf**2/serr**2
-    wt[(wt<0) | ~np.isfinite(wt)] = 0
-    totwt = np.sum(wt,axis=0)
-    badcol = (totwt<=0)
-    totwt[badcol] = 1
-    # Compute the flux and flux error
-    flux = np.sum(psf*sim/serr**2,axis=0)/totwt
-    fluxerr = np.sqrt(1/totwt)    
-    fluxerr[badcol] = 1e30  # bad columns
-    # Recompute the trace
-    trace = np.sum(psf*yy,axis=0)+yblo
-    
-    # Check for outliers
-    diff = (sim-flux*psf)/serr**2
-    bad = (diff > 25)
-    if np.sum(bad)>0:
-        # Mask bad pixels
-        sim[bad] = 0
-        serr[bad] = 1e20
-        # Recompute the flux
-        wt = psf**2/serr**2
-        totwt = np.sum(wt,axis=0)
-        badcol = (totwt<=0)
-        totwt[badcol] = 1        
-        flux = np.sum(psf*sim/serr**2,axis=0)/totwt
-        fluxerr = np.sqrt(1/totwt)
-        fluxerr[badcol] = 1e30  # bad columns
-        # Recompute the trace
-        trace = np.sum(psf*yy,axis=0)+yblo
-        
-    return flux,fluxerr,trace
 
 
 def extract1d(filename):
@@ -203,13 +53,14 @@ def extract1d(filename):
     print('data is '+str(type(input_model)))
     nslits = len(input_model.slits)
     print(str(nslits)+' slits')
-
+    filebase,ext = os.path.splitext(os.path.basename(filename))
+    
     # Get the reference file
     print('Getting reference file')
     step = Extract1dStep()
     extract_ref = step.get_reference_file(input_model,'extract1d')
     print('Using reference file: '+extract_ref)
-    extract_ref_dict = extract.open_extract1d_ref(extract_ref, input_model.meta.exposure.type)
+    extract_ref_dict = jextract.open_extract1d_ref(extract_ref, input_model.meta.exposure.type)
 
         
     # Looping over slits
@@ -229,20 +80,20 @@ def extract1d(filename):
 
         # Get extraction parameters, from extract.create_extraction()
         slitname = slit.name
-        sp_order = extract.get_spectral_order(slit)        
+        sp_order = jextract.get_spectral_order(slit)        
         meta_source = slit
         smoothing_length = None
         use_source_posn = True
-        extract_params = extract.get_extract_parameters(extract_ref_dict,meta_source,slitname,
-                                                        sp_order,input_model.meta,step.smoothing_length,
-                                                        step.bkg_fit,step.bkg_order,use_source_posn)
+        extract_params = jextract.get_extract_parameters(extract_ref_dict,meta_source,slitname,
+                                                         sp_order,input_model.meta,step.smoothing_length,
+                                                         step.bkg_fit,step.bkg_order,use_source_posn)
         extract_params['dispaxis'] = extract_ref_dict['apertures'][0]['dispaxis']
 
         # Get extraction model, extract.extract_one_slit()
         # If there is an extract1d reference file (there doesn't have to be), it's in JSON format.
-        extract_model = extract.ExtractModel(input_model=input_model, slit=slit, **extract_params)
-        ap = extract.get_aperture(im.shape, extract_model.wcs, extract_params)
-        extract_model.update_extraction_limits(ap)
+        extract_model = jextract.ExtractModel(input_model=input_model, slit=slit, **extract_params)
+        ap = jextract.get_aperture(im.shape, extract_model.wcs, extract_params)
+        jextract_model.update_extraction_limits(ap)
         
         if extract_model.use_source_posn:
             #if prev_offset == OFFSET_NOT_ASSIGNED_YET:  # Only call this method for the first integration.
@@ -311,7 +162,7 @@ def extract1d(filename):
         ytrace = np.polyval(coef,x)
 
         # Get the trace
-        ttab = tracing(im,yind)
+        ttab = extract.tracing(im,yind)
         tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
         ytrace = np.polyval(tcoef,x)
         tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)
@@ -332,8 +183,8 @@ def extract1d(filename):
         boxsum = np.nansum(mask*im,axis=0)
 
         # Optimal extraction
-        flux,fluxerr,trace = extract_optimal(im*mask,ytrace,imerr=err*mask,verbose=verbose,
-                                             off=10,backoff=50,smlen=31):
+        flux,fluxerr,trace = extract.extract_optimal(im*mask,ytrace,imerr=err*mask,verbose=verbose,
+                                                     off=10,backoff=50,smlen=31)
         # Get the wavelengths
         wav = np.nansum(wave*mask,axis=0)/np.sum(mask,axis=0) * 1e4  # convert to Angstroms
         
@@ -350,7 +201,18 @@ def extract1d(filename):
         # Apply relative flux calibration correction
 
         # Put it all together
-        spec = Table((newwav,flux,fluxerr,trace),names=['wave','flux','flux_error','ytrace'])
-        
+        sp = Spec1D(flux,err=fluxerr,wave=wav,instrument='NIRSpec')
+        sp.ytrace = trace
+        sp.source_name = slit.source_name
+        sp.source_id = slit.source_id
+        sp.slitlet_id = slit.slitlet_id
+        sp.source_ra = slit.source_ra
+        sp.source_dec = slit.source_dec        
+        #spec = Table((newwav,flux,fluxerr,trace),names=['wave','flux','flux_error','ytrace'])
+
+        # Save the file
+        filename = slit.source_name+'_'+filebase+'.fits'
+        print('Writing spectrum to ',filename)
+        sp.write(filename,overwrite=True)
         
     import pdb; pdb.set_trace()
