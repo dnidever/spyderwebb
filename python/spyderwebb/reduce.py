@@ -35,6 +35,91 @@ def reduce(files):
     """ This reduces the JWST NIRSpec MSA data """
     pass
 
+def profilefit(x,y):
+    """ Fit a spectral profile."""
+    flux = np.sum(np.maximum(y,0))
+    xmean = np.sum(x*np.maximum(y,0))/flux
+    xsig = np.sqrt(np.sum((x-xmean)**2 * np.maximum(y,0)/flux))
+    # Fit binned Gaussian
+    p0 = [np.max(y),xmean,xsig,0.0]
+    bnds = [np.array([p0[0]*0.5,xmean-1,0.5*xsig,-0.3*p0[0]]),
+            np.array([p0[0]*2,xmean+1,2*xsig,0.3*p0[0]])]
+    pars,cov = dln.gaussfit(x,y,initpar=p0,bounds=bnds,binned=True)
+    perror = np.sqrt(np.diag(cov))
+    return pars,perror
+    
+
+def tracing(im,ymid=None,step=50,nbin=50):
+    """ Trace a spectrum. Assumed to be in the horizontal direction."""
+    ny,nx = im.shape
+    y,x = np.arange(ny),np.arange(nx)
+    
+    # Find ymid if not input
+    if ymid is None:
+        tot = np.nanmedian(np.maximum(im[:,nx//2-50:nx//2+50],0),axis=1)
+        ymid = np.argmax(tot)
+        
+    # Trace using binned profiles, starting at middle
+    nsteps = (nx//2)//step
+    #if nsteps % 2 == 0: nsteps-=1
+    lasty = ymid
+    lastsig = 1.0
+    xmnarr = []
+    ymidarr = []
+    ysigarr = []
+    # Forwards
+    for i in range(nsteps):
+        xmn = nx//2 + i*step
+        xlo = xmn - nbin//2
+        xhi = xmn + nbin//2 + 1
+        profile = np.nanmedian(im[:,xlo:xhi],axis=1)
+        ind = np.argmax(profile)
+        ylo = int(np.floor(lasty-2.5*lastsig))
+        yhi = int(np.ceil(lasty+2.5*lastsig))
+        slc = slice(ylo,yhi+1)
+        profileclip = profile[slc]
+        profileclip /= np.sum(np.maximum(profileclip,0))  # normalize
+        yclip = y[slc]
+        pars,perror = profilefit(yclip,profileclip)
+        xmnarr.append(xmn)
+        ymidarr.append(pars[1])
+        ysigarr.append(pars[2])
+        # Remember
+        lasty = pars[1]
+        lastsig = pars[2]
+        
+    # Backwards
+    lasty = ymidarr[0]
+    lastsig = ysigarr[0]
+    for i in np.arange(1,nsteps):
+        xmn = nx//2 - i*step
+        xlo = xmn - nbin//2
+        xhi = xmn + nbin//2 + 1        
+        profile = np.nanmedian(im[:,xlo:xhi],axis=1)
+        ind = np.argmax(profile)
+        ylo = int(np.floor(lasty-2.5*lastsig))
+        yhi = int(np.ceil(lasty+2.5*lastsig))
+        slc = slice(ylo,yhi+1)
+        profileclip = profile[slc]
+        profileclip /= np.sum(np.maximum(profileclip,0))  # normalize
+        yclip = y[slc]
+        pars,perror = profilefit(yclip,profileclip)
+        xmnarr.append(xmn)
+        ymidarr.append(pars[1])
+        ysigarr.append(pars[2])
+        # Remember
+        lasty = pars[1]
+        lastsig = pars[2]
+
+    #xmnarr = np.array(xmnarr)
+    #ymidarr = np.array(ymidarr)
+    #ysigarr = np.array(ysigarr)
+    ttab = Table((xmnarr,ymidarr,ysigarr),names=['x','y','ysig'])
+    ttab.sort('x')
+        
+    return ttab
+        
+    
 def extract_optimal(im,ytrace,imerr=None,verbose=False,off=10,backoff=50,smlen=31):
     """ Extract a spectrum using optimal extraction (Horne 1986)"""
     ny,nx = im.shape
@@ -211,8 +296,7 @@ def extract1d(filename):
                 pixels = np.arange(disp_range[0], disp_range[1], dtype=np.float64)
                 srclim.append([lower(pixels), upper(pixels)])
 
-        # Get the trace
-                
+
         # Polynomial coefficients for traces
         # y(1024) = 0
         coef0 = np.array([ 4.59440169e-06, -1.86120908e-04, -4.83294422e+00])
@@ -225,11 +309,22 @@ def extract1d(filename):
         coef[2] += yind
         x = np.arange(2048)
         ytrace = np.polyval(coef,x)
+
+        # Get the trace
+        ttab = tracing(im,yind)
+        tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
+        ytrace = np.polyval(tcoef,x)
+        tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)
+        ysig = np.polyval(tsigcoef,x)
         
         # Create the mask
         ybin = 3
         yy = np.arange(ny).reshape(-1,1) + np.zeros(nx).reshape(1,-1)
         mask = ((yy >= (ytrace-ybin)) & (yy <= (ytrace+ybin)))
+
+        # I think the trace is at
+        # ny/2+offset at Y=1024
+
         
         # Build PSF model
 
@@ -239,5 +334,23 @@ def extract1d(filename):
         # Optimal extraction
         flux,fluxerr,trace = extract_optimal(im*mask,ytrace,imerr=err*mask,verbose=verbose,
                                              off=10,backoff=50,smlen=31):
+        # Get the wavelengths
+        wav = np.nansum(wave*mask,axis=0)/np.sum(mask,axis=0) * 1e4  # convert to Angstroms
+        
+        # Apply slit correction
+        srcxpos = slit.source_xpos
+        srcypos = slit.source_ypos
+        # SLIT correction, srcxpos is source position in slit
+        # the slit is 2 pixels wide
+        dwave = np.gradient(wav)
+        newwav = wav+2*srcxpos*dwave
+        print('Applying slit correction: %.2f pixels' % (2*srcxpos))
+        
+
+        # Apply relative flux calibration correction
+
+        # Put it all together
+        spec = Table((newwav,flux,fluxerr,trace),names=['wave','flux','flux_error','ytrace'])
+        
         
     import pdb; pdb.set_trace()
