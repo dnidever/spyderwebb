@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.special import erf
-
+from functools import wraps
+from scipy import interpolate
 
 def gauss2dbin(x,amp,center,sigma):
     """ Make lots of Gaussian profiles."""
@@ -80,3 +81,70 @@ def weightedregression(x,y,w,axis=0,zero=False):
         merr = np.sqrt( sig**2 / np.nansum(wt*x**2,axis=axis) )
         
         return m,merr
+
+def scalarDecorator(func):
+    """Decorator to return scalar outputs for wave2pix and pix2wave
+    """
+    @wraps(func)
+    def scalar_wrapper(*args,**kwargs):
+        if np.array(args[0]).shape == ():
+            scalarOut= True
+            newargs= (np.array([args[0]]),)
+            for ii in range(1,len(args)):
+                newargs= newargs+(args[ii],)
+            args= newargs
+        else:
+            scalarOut= False
+        result= func(*args,**kwargs)
+        if scalarOut:
+            return result[0]
+        else:
+            return result
+    return scalar_wrapper
+
+@scalarDecorator
+def wave2pix(wave,wave0):
+    """ convert wavelength to pixel given wavelength array
+    Args :
+       wave(s) : wavelength(s) (\AA) to get pixel of
+       wave0 : array with wavelength as a function of pixel number 
+    Returns :
+       pixel(s) in the chip
+    """
+    pix0 = np.arange(len(wave0))
+    # Need to sort into ascending order
+    sindx = np.argsort(wave0)
+    wave0 = wave0[sindx]
+    pix0 = pix0[sindx]
+    # Start from a linear baseline
+    #baseline = np.polynomial.Polynomial.fit(wave0,pix0,1)
+    #ip = interpolate.InterpolatedUnivariateSpline(wave0,pix0/baseline(wave0),k=3)
+    #out = baseline(wave)*ip(wave)
+    out = interpolate.InterpolatedUnivariateSpline(wave0,pix0,k=3)(wave) 
+    # NaN for out of bounds
+    out[wave > wave0[-1]] = np.nan
+    out[wave < wave0[0]] = np.nan
+    return out
+
+@scalarDecorator
+def pix2wave(pix,wave0):
+    """ convert pixel(s) to wavelength(s)
+    Args :
+       pix : pixel(s) to get wavelength at
+       wave0 : array with wavelength as a function of pixel number 
+    Returns :
+       wavelength(s) in \AA
+    """
+    pix0 = np.arange(len(wave0))
+    # Need to sort into ascending order
+    sindx = np.argsort(pix0)
+    wave0 = wave0[sindx]
+    pix0 = pix0[sindx]
+    # Start from a linear baseline
+    baseline = np.polynomial.Polynomial.fit(pix0,wave0,1)
+    ip = interpolate.InterpolatedUnivariateSpline(pix0,wave0/baseline(pix0), k=3)
+    out = baseline(pix)*ip(pix)
+    # NaN for out of bounds
+    out[pix < 0] = np.nan
+    out[pix > 2047] = np.nan
+    return out

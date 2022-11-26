@@ -34,9 +34,12 @@ from jwst.cube_build.cube_build_step import CubeBuildStep
 from jwst.extract_1d.extract_1d_step import Extract1dStep
 from jwst.extract_1d import extract as jextract
 
+from scipy.ndimage.filters import median_filter, gaussian_filter
+
 from glob import glob
 from doppler.spec1d import Spec1D
-from . import extract
+from . import extract, utils, sincint
+
 
 def getexpinfo(obsname,logger=None):
 
@@ -130,7 +133,125 @@ def joinspec(sp1,sp2):
     sp.tsigcoef2 = sp2.tsigcoef
 
     return sp
+
+def stackspec(splist):
+    """ Stack multiple spectra of the same source."""
+
+    nspec = len(splist)
+    npix = splist[0].npix
+    norder = splist[0].norder
+
+    # The two detectors are about 147 pixels apart
+
+    # Array of sinc widths
+    nres = [3.5,3.5]
+
+    # initialize array for stack of interpolated spectra
+    zeros = np.zeros([nspec,npix,norder])
+    izeros = np.zeros([nspec,npix,norder],bool)
+    stack = Spec1D(np.zeros(10),wave=np.zeros(10))
+    stack.flux = zeros
+    stack.err = zeros.copy()
+    stack.wave = np.zeros([npix,norder])
+    stack.mask = np.ones([nspec,npix,norder],bool)
+    stack.cont = zeros.copy()
     
+    # Loop over the detectors/orders
+    for o in range(norder):
+
+        # Use the wavelength array of the first spectrum
+        fwave = splist[0].wave[:,o]
+        gdwave, = np.where(fwave > 0)
+        fwave = fwave[gdwave]
+        
+        # Loop over each exposure and interpolate to final wavelength grid
+        for i in range(nspec):
+            spec = splist[i]
+
+            # Get the good pixels
+            gdpix, = np.where(spec.wave[:,o] > 0)
+            ngdpix = len(gdpix)
+            wave = spec.wave[gdpix,o]
+            flux = spec.flux[gdpix,o]
+            err = spec.err[gdpix,o]
+            mask = spec.mask[gdpix,o]
+
+            # Get the pixel values to interpolate to
+            #pix = utils.wave2pix(wave,fwave)
+            #gd, = np.where(np.isfinite(pix))
+            
+            # Get a smoothed, filtered spectrum to use as replacement for bad values
+            msmlen = np.minimum(501,ngdpix//2)
+            if msmlen % 2 ==0: msmlen+=1  # want odd
+            gsmlen = np.minimum(100,ngdpix//4)
+            
+            cont = gaussian_filter(median_filter(flux,[msmlen],mode='reflect'),gsmlen)
+            # Deal with super high error values for bad pixels
+            bderr, = np.where((mask==True) | (err>1e20))
+            gderr, = np.where((mask==False) & (err<1e20))
+            temperr = err.copy()
+            if len(bderr)>0:
+                temperr[bderr] = np.median(err[gderr])
+            errcont = gaussian_filter(median_filter(temperr,[msmlen],mode='reflect'),gsmlen)
+            bad, = np.where(mask | (err>1e20))
+            if len(bad) > 0:
+                flux[bad] = cont[bad]
+                err[bad] = errcont[bad]
+                mask[bad] = True
+                
+            # Load up quantity/error pairs for interpolation
+            raw = [[flux,err**2],
+                   [mask.astype(float),None]]
+
+            # Do the sinc interpolation
+            # sincint(x,nres,speclist)
+            # x is desired positions
+            #out = sincint.sincint(pix[gd],nres[o],raw)
+            #newflux = out[0][0]
+            #newerr = out[0][1]
+            #newmask = out[1][0]
+
+            newflux = dln.interp(wave,flux,fwave,kind='cubic',extrapolate=False)
+            newerr = dln.interp(wave,err,fwave,kind='cubic',extrapolate=False)
+            newmask = dln.interp(wave,mask.astype(float),fwave,kind='cubic',extrapolate=False)            
+            gd, = np.where(np.isfinite(newflux))
+            
+            # From output flux, get continuum to remove, so that all spectra are
+            #   on same scale. We'll later multiply in the median continuum
+            #newflux = out[0][0]
+            stack.cont[i,gd,o] = gaussian_filter(median_filter(newflux[gd],[msmlen],mode='reflect'),gsmlen)
+
+            # Load interpolated spectra into output stack
+            stack.wave[0:len(fwave),o] = fwave
+            stack.flux[i,gd,o] = newflux[gd] / stack.cont[i,gd,o]
+            stack.err[i,gd,o] = newerr[gd] / stack.cont[i,gd,o]
+            # For mask, set bits where interpolated value is below some threshold to "good"
+            goodmask, = np.where(newmask[gd] < 0.5)
+            if len(goodmask)>0:
+                stack.mask[i,gd[goodmask],o] = False
+
+            # Set ERR of bad pixels to 1e30
+            badpix, = np.where(stack.mask[i,:,o])
+            if len(badpix)>0:
+                stack.err[i,badpix,o] = 1e30
+                
+    # Create final spectrum
+    zeros = np.zeros(splist[0].flux.shape)
+    izeros = np.zeros(splist[0].flux.shape,bool)
+    comb = Spec1D(zeros,err=zeros.copy(),mask=np.ones(splist[0].flux.shape,bool),wave=stack.wave.copy())
+    comb.cont = zeros.copy()
+    
+    # Pixel-by-pixel weighted average
+    for o in range(norder):
+        cont = np.mean(stack.cont[:,:,o],axis=0)
+        comb.flux[:,o] = np.sum(stack.flux[:,:,o]/stack.err[:,:,o]**2,axis=0)/np.sum(1./stack.err[:,:,o]**2,axis=0) * cont
+        comb.err[:,o] =  np.sqrt(1./np.sum(1./stack.err[:,:,o]**2,axis=0)) * cont
+        comb.mask[:,o] = np.bitwise_and.reduce(stack.mask[:,:,o],0)
+        comb.cont[:,o] = cont
+        
+    return comb,stack
+
+
 def reduce(obsname,outdir='./',logger=None):
     """ This reduces the JWST NIRSpec MSA data """
 
@@ -200,7 +321,8 @@ def reduce(obsname,outdir='./',logger=None):
                         splist.append(especlist[ind[0]])
 
                 # Do the stacking
-
+                combsp = stackspec(splist)
+                
                 # Write to file
                 
                 import pdb; pdb.set_trace()
@@ -237,7 +359,8 @@ def extractexp(expname,logger=None,outdir='./'):
     speclist = []
     for i in range(nsources):
         sourceid = sourceids[i]
-        print(i+1,sourceid)
+        print(' ')
+        print('--',i+1,sourceid,'--')
         # NRS1
         ind1, = np.where(sourceid1==sourceid)
         if len(ind1)>0:
@@ -248,10 +371,12 @@ def extractexp(expname,logger=None,outdir='./'):
             sp2 = extract.extract_slit(data2,data2.slits[ind2[0]])
 
         # Join the two spectra together
-        sp = joinspec(sp1,sp2)
-
-        import pdb;pdb.set_trace()
-        
+        if sp1 is not None and sp2 is not None:
+            sp = joinspec(sp1,sp2)
+        else:
+            if sp1 is not None: sp=sp1
+            if sp2 is not None: sp=sp2            
+            
         # Save the file
         outfile = outdir+sp.source_name+'_'+expname+'.fits'
         print('Writing to '+outfile)

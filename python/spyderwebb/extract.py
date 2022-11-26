@@ -10,6 +10,7 @@ from jwst.extract_1d import extract as jextract
 
 # Astropy tools:
 from astropy.io import fits
+from astropy.time import Time
 from doppler.spec1d import Spec1D
 from . import utils
 
@@ -18,16 +19,21 @@ def profilefit(x,y):
     flux = np.sum(np.maximum(y,0))
     xmean = np.sum(x*np.maximum(y,0))/flux
     xsig = np.sqrt(np.sum((x-xmean)**2 * np.maximum(y,0)/flux))
+    xsig = np.maximum(xsig,0.1)
     # Fit binned Gaussian
     p0 = [np.max(y),xmean,xsig,0.0]
     bnds = [np.array([p0[0]*0.5,xmean-1,0.5*xsig,-0.3*p0[0]]),
             np.array([p0[0]*2,xmean+1,2*xsig,0.3*p0[0]])]
+    if np.sum((bnds[0][:] >= bnds[1][:]))>0:
+        print('problem in profilefit')
+        import pdb; pdb.set_trace()
+    
     pars,cov = dln.gaussfit(x,y,initpar=p0,bounds=bnds,binned=True)
     perror = np.sqrt(np.diag(cov))
     return pars,perror
     
 
-def tracing(im,ymid=None,step=25,nbin=50):
+def tracing(im,err,ymid=None,step=25,nbin=50):
     """ Trace a spectrum. Assumed to be in the horizontal direction."""
     ny,nx = im.shape
     y,x = np.arange(ny),np.arange(nx)
@@ -53,18 +59,24 @@ def tracing(im,ymid=None,step=25,nbin=50):
         xlo = xmn - nbin//2
         xhi = xmn + nbin//2 + 1
         profile = np.nanmedian(im[:,xlo:xhi],axis=1)
+        profileerr = np.nanmedian(err[:,xlo:xhi],axis=1)        
         profile[~np.isfinite(profile)] = 0.0
+        profileerr[~np.isfinite(profileerr) | (profileerr<=0)] = 1e30
         flux = np.nansum(np.maximum(profile,0))
-        if flux <= 0:
+        snr = np.nanmax(profile/profileerr)  # max S/N
+        if flux <= 0 or snr<5:
             continue
-        ylo = int(np.floor(lasty-3.0*lastsig))
-        yhi = int(np.ceil(lasty+3.0*lastsig))
+        ylo = np.maximum(int(np.floor(lasty-3.0*lastsig)),0)
+        yhi = np.minimum(int(np.ceil(lasty+3.0*lastsig)),ny)
         slc = slice(ylo,yhi+1)
         profileclip = profile[slc]
         profileclip /= np.sum(np.maximum(profileclip,0))  # normalize
         yclip = y[slc]
         if np.sum(~np.isfinite(profileclip))>0:
             continue
+        if len(yclip)==0:
+            print('no pixels')
+            import pdb; pdb.set_trace()
         pars,perror = profilefit(yclip,profileclip)
         xmnarr.append(xmn)
         yhtarr.append(pars[0])        
@@ -82,19 +94,25 @@ def tracing(im,ymid=None,step=25,nbin=50):
         xlo = xmn - nbin//2
         xhi = xmn + nbin//2 + 1
         profile = np.nanmedian(im[:,xlo:xhi],axis=1)
+        profileerr = np.nanmedian(err[:,xlo:xhi],axis=1)        
         profile[~np.isfinite(profile)] = 0.0
-        flux = np.nansum(np.maximum(profile,0))        
-        if flux <= 0:
+        profileerr[~np.isfinite(profileerr) | (profileerr<=0)] = 1e30
+        flux = np.nansum(np.maximum(profile,0))
+        snr = np.nanmax(profile/profileerr)  # max S/N
+        if flux <= 0 or snr<5:
             continue
         ind = np.argmax(profile)
-        ylo = int(np.floor(lasty-3.0*lastsig))
-        yhi = int(np.ceil(lasty+3.0*lastsig))
+        ylo = np.maximum(int(np.floor(lasty-3.0*lastsig)),0)
+        yhi = np.minimum(int(np.ceil(lasty+3.0*lastsig)),ny)
         slc = slice(ylo,yhi+1)
         profileclip = profile[slc]
         profileclip /= np.sum(np.maximum(profileclip,0))  # normalize
         yclip = y[slc]
         if np.sum(~np.isfinite(profileclip))>0:
             continue        
+        if len(yclip)==0:
+            print('no pixels')
+            import pdb; pdb.set_trace()
         pars,perror = profilefit(yclip,profileclip)
         xmnarr.append(xmn)
         yhtarr.append(pars[0])        
@@ -295,6 +313,10 @@ def extract_slit(input_model,slit,verbose=False):
     # Number of good pixels per column
     ngood = np.sum(~bad,axis=0)
     
+    if np.sum(ngood)==0:
+        print('No data to extract')
+        return None
+    
     ## Get the reference file
     if True:
         step = Extract1dStep()
@@ -388,9 +410,17 @@ def extract_slit(input_model,slit,verbose=False):
     yind = (ny-1)/2+offset
     
     # Get the trace
-    x = np.arange(nx)    
-    ttab = tracing(im,yind)
-    tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
+    x = np.arange(nx)
+    ttab = tracing(im,err,yind)
+
+    if len(ttab)==0:
+        print('tracing problem')
+        import pdb; pdb.set_trace()
+    try:
+        tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
+    except:
+        print('tracing coefficient problem')
+        import pdb; pdb.set_trace()
     ytrace = np.polyval(tcoef,x)
     tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)
     ysig = np.polyval(tsigcoef,x)
@@ -435,9 +465,11 @@ def extract_slit(input_model,slit,verbose=False):
     print('Applying slit correction: %.2f pixels' % (2*srcxpos))
 
     # Apply relative flux calibration correction
-
+    
     # Put it all together
     sp = Spec1D(flux,err=fluxerr,wave=wav,mask=(fluxerr>1e20),instrument='NIRSpec')
+    sp.date = input_model.meta.date
+    sp.jd = Time(input_model.meta.date).jd
     sp.ytrace = ytrace
     sp.source_name = slit.source_name
     sp.source_id = slit.source_id
@@ -451,11 +483,5 @@ def extract_slit(input_model,slit,verbose=False):
     sp.offset = offset
     sp.tcoef = tcoef
     sp.tsigcoef = tsigcoef
-    #spec = Table((newwav,flux,fluxerr,trace),names=['wave','flux','flux_error','ytrace'])
-
-    ## Save the file
-    #filename = slit.source_name+'_'+filebase+'.fits'
-    #print('Writing spectrum to ',filename)
-    #sp.write(filename,overwrite=True)
     
     return sp
