@@ -219,6 +219,12 @@ def extract_optimal(im,ytrace,imerr=None,verbose=False,off=10,backoff=50,smlen=3
         fluxerr[badcol] = 1e30  # bad columns
         # Recompute the trace
         trace = np.nansum(psf*yy,axis=0)+yblo
+
+    # Need at least ONE good profile point to measure a flux
+    ngood = np.sum((psf>0.01)*np.isfinite(im),axis=0)
+    badcol = (ngood==0)
+    flux[badcol] = 0.0
+    fluxerr[badcol] = 1e30 
         
     return flux,fluxerr,trace,psf
 
@@ -242,7 +248,7 @@ def extract_psf(im,psf,err=None,skyfit=True):
         flux,fluxerr,sky,skyerr = utils.weightedregression(psf,im,wt,zero=False)
         # Compute the flux and flux error
         fluxerr[badcol] = 1e30  # bad columns
-        # Need at least ONE good profile points to measure a flux
+        # Need at least ONE good profile point to measure a flux
         ngood = np.sum((psf>0.01)*np.isfinite(im),axis=0)
         badcol = (ngood==0)
         flux[badcol] = 0.0
@@ -261,7 +267,7 @@ def extract_psf(im,psf,err=None,skyfit=True):
         flux,fluxerr = utils.weightedregression(psf,im,wt,zero=True)
         # Compute the flux and flux error
         fluxerr[badcol] = 1e30  # bad columns
-        # Need at least ONE good profile points to measure a flux
+        # Need at least ONE good profile point to measure a flux
         ngood = np.sum((psf>0.01)*np.isfinite(im),axis=0)
         badcol = (ngood==0)
         flux[badcol] = 0.0
@@ -431,7 +437,7 @@ def extract_slit(input_model,slit,verbose=False):
     # Apply relative flux calibration correction
 
     # Put it all together
-    sp = Spec1D(flux,err=fluxerr,wave=wav,instrument='NIRSpec')
+    sp = Spec1D(flux,err=fluxerr,wave=wav,mask=(fluxerr>1e20),instrument='NIRSpec')
     sp.ytrace = ytrace
     sp.source_name = slit.source_name
     sp.source_id = slit.source_id
@@ -441,7 +447,7 @@ def extract_slit(input_model,slit,verbose=False):
     sp.xstart = slit.xstart
     sp.xsize = slit.xsize
     sp.ystart = slit.ystart
-    sp.yize = slit.ysize
+    sp.ysize = slit.ysize
     sp.offset = offset
     sp.tcoef = tcoef
     sp.tsigcoef = tsigcoef
@@ -451,5 +457,5 @@ def extract_slit(input_model,slit,verbose=False):
     #filename = slit.source_name+'_'+filebase+'.fits'
     #print('Writing spectrum to ',filename)
     #sp.write(filename,overwrite=True)
-
+    
     return sp
