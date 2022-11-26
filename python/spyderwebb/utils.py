@@ -54,6 +54,8 @@ def weightedregression(x,y,w,axis=0,zero=False):
         # ywtmn = Sum(w*y)/Sum(w)
         # m = Sum(w*(x-xwtmn)*(y-ywtmn)) / Sum(w*(x-xwtmn)^2)
         # b = ywtmn - m*xwtmn
+
+        # https://ms.mcmaster.ca/canty/teaching/stat3a03/Lectures7.pdf
         
         xwtmn = np.nansum(wt*x,axis=axis)
         ywtmn = np.nansum(wt*y,axis=axis)
