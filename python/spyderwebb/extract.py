@@ -112,13 +112,13 @@ def tracing(im,ymid=None,step=25,nbin=50):
 def optimalpsf(im,ytrace,err=None,off=10,backoff=50,smlen=31):
     """ Compute the PSF from the image using "optimal extraction" techniques."""
     ny,nx = im.shape
-    yest = np.median(ytrace)
+    yest = np.nanmedian(ytrace)
     # Get the subimage
     yblo = int(np.maximum(yest-backoff,0))
     ybhi = int(np.minimum(yest+backoff,ny))
     nback = ybhi-yblo
     # Background subtract
-    med = np.median(im[yblo:ybhi,:],axis=0)
+    med = np.nanmedian(im[yblo:ybhi,:],axis=0)
     medim = np.zeros(nback).reshape(-1,1) + med.reshape(1,-1)
     subim = im[yblo:ybhi,:]-medim
     suberr = imerr[yblo:ybhi,:]
@@ -135,7 +135,7 @@ def optimalpsf(im,ytrace,err=None,off=10,backoff=50,smlen=31):
     badpix = (serr <= 0)
     serr[badpix] = 1e20
     # Compute the profile/probability matrix from the image
-    tot = np.sum(np.maximum(sim,0),axis=0)
+    tot = np.nansum(np.maximum(sim,0),axis=0)
     tot[(tot<=0) | ~np.isfinite(tot)] = 1
     psf1 = np.maximum(sim,0)/tot
     psf = np.zeros(psf1.shape,float)
@@ -143,7 +143,7 @@ def optimalpsf(im,ytrace,err=None,off=10,backoff=50,smlen=31):
         psf[i,:] = dln.medfilt(psf1[i,:],smlen)
         #psf[i,:] = utils.gsmooth(psf1[i,:],smlen)        
     psf[(psf<0) | ~np.isfinite(psf)] = 0
-    totpsf = np.sum(psf,axis=0)
+    totpsf = np.nansum(psf,axis=0)
     totpsf[(totpsf<=0) | (~np.isfinite(totpsf))] = 1
     psf /= totpsf
     psf[(psf<0) | ~np.isfinite(psf)] = 0
@@ -411,10 +411,13 @@ def extract_slit(input_model,slit,verbose=False):
     # Optimal extraction
     oflux,ofluxerr,otrace,opsf = extract_optimal(im*mask,ytrace,imerr=err)
 
-    import pdb; pdb.set_trace()
+    # GAUSSIAN extraction looks better!
+    flux = gflux
+    fluxerr = gfluxerr
     
     # Get the wavelengths
-    wav = np.nansum(wave*mask,axis=0)/np.sum(mask,axis=0) * 1e4  # convert to Angstroms
+    pmask = (gpsf > 0.01)
+    wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
         
     # Apply slit correction
     srcxpos = slit.source_xpos
@@ -424,13 +427,12 @@ def extract_slit(input_model,slit,verbose=False):
     dwave = np.gradient(wav)
     newwav = wav+2*srcxpos*dwave
     print('Applying slit correction: %.2f pixels' % (2*srcxpos))
-        
 
     # Apply relative flux calibration correction
 
     # Put it all together
     sp = Spec1D(flux,err=fluxerr,wave=wav,instrument='NIRSpec')
-    sp.ytrace = trace
+    sp.ytrace = ytrace
     sp.source_name = slit.source_name
     sp.source_id = slit.source_id
     sp.slitlet_id = slit.slitlet_id
@@ -440,6 +442,7 @@ def extract_slit(input_model,slit,verbose=False):
     sp.xsize = slit.xsize
     sp.ystart = slit.ystart
     sp.yize = slit.ysize
+    sp.offset = offset
     sp.tcoef = tcoef
     sp.tsigcoef = tsigcoef
     #spec = Table((newwav,flux,fluxerr,trace),names=['wave','flux','flux_error','ytrace'])
