@@ -414,16 +414,25 @@ def extract_slit(input_model,slit,verbose=False):
     ttab = tracing(im,err,yind)
 
     if len(ttab)==0:
-        print('tracing problem')
-        import pdb; pdb.set_trace()
+        print('Problem - no trace found')
+        return None
+
     try:
-        tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
+        torder = 2
+        if len(ttab)<3:
+            tcoef = np.array([np.median(ttab['y'])])
+        else:
+            tcoef = robust.polyfit(ttab['x'],ttab['y'],torder)
+        ytrace = np.polyval(tcoef,x)
+        if len(ttab)<2:
+            tsigcoef = np.array([np.median(ttab['ysig'])])
+        else:
+            tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)
+        ysig = np.polyval(tsigcoef,x)
     except:
         print('tracing coefficient problem')
         import pdb; pdb.set_trace()
-    ytrace = np.polyval(tcoef,x)
-    tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)
-    ysig = np.polyval(tsigcoef,x)
+
         
     # Create the mask
     ybin = 3

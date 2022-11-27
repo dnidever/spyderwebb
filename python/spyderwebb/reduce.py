@@ -257,7 +257,8 @@ def reduce(obsname,outdir='./',logger=None):
 
     if outdir.endswith('/')==False: outdir+='/'
     #if logger is None: logger=dln.basiclogger()
-
+    stackdir = outdir+'stack/'
+    if os.path.exists(stackdir)==False: os.makedirs(stackdir)
     
     # Get exposures information
     edict = getexpinfo(obsname)
@@ -321,9 +322,12 @@ def reduce(obsname,outdir='./',logger=None):
                         splist.append(especlist[ind[0]])
 
                 # Do the stacking
-                combsp = stackspec(splist)
+                combsp,stack = stackspec(splist)
                 
                 # Write to file
+                outfile = stackdir+'/'+srcid+'_stack.fits'
+                print('Writing to '+outfile)
+                combsp.write(outfile,overwrite=True)
                 
                 import pdb; pdb.set_trace()
             
