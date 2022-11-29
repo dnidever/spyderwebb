@@ -37,6 +37,7 @@ from jwst.extract_1d import extract as jextract
 from scipy.ndimage.filters import median_filter, gaussian_filter
 
 from glob import glob
+import doppler
 from doppler.spec1d import Spec1D
 from . import extract, utils, sincint
 
@@ -146,36 +147,48 @@ def stackspec(splist):
     # Array of sinc widths
     nres = [3.5,3.5]
 
+    # wavelength coefficients with linear wavelength steps
+    # 3834 pixels, from 9799.765 to 18797.7624 A
+    wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
+    nfpix = 3834
+    fwave = np.polyval(wcoef,np.arange(nfpix))
+    
     # initialize array for stack of interpolated spectra
-    zeros = np.zeros([nspec,npix,norder])
-    izeros = np.zeros([nspec,npix,norder],bool)
+    zeros = np.zeros([nspec,nfpix])
+    izeros = np.zeros([nspec,nfpix],bool)
     stack = Spec1D(np.zeros(10),wave=np.zeros(10))
     stack.flux = zeros
     stack.err = zeros.copy()
-    stack.wave = np.zeros([npix,norder])
-    stack.mask = np.ones([nspec,npix,norder],bool)
+    stack.wave = fwave
+    stack.mask = np.ones([nspec,nfpix],bool)
     stack.cont = zeros.copy()
     
-    # Loop over the detectors/orders
-    for o in range(norder):
-
-        # Use the wavelength array of the first spectrum
-        fwave = splist[0].wave[:,o]
-        gdwave, = np.where(fwave > 0)
-        fwave = fwave[gdwave]
+        #gdwave, = np.where(fwave > 0)
+        #fwave = fwave[gdwave]
         
-        # Loop over each exposure and interpolate to final wavelength grid
-        for i in range(nspec):
-            spec = splist[i]
+    # Loop over each exposure and interpolate to final wavelength grid
+    for i in range(nspec):
+        spec = splist[i]
+
+        # Loop over the detectors/orders
+        for o in range(norder):
 
             # Get the good pixels
-            gdpix, = np.where(spec.wave[:,o] > 0)
-            ngdpix = len(gdpix)
-            wave = spec.wave[gdpix,o]
-            flux = spec.flux[gdpix,o]
-            err = spec.err[gdpix,o]
-            mask = spec.mask[gdpix,o]
-
+            if spec.ndim==2:
+                gdpix, = np.where(spec.wave[:,o] > 0)
+                ngdpix = len(gdpix)
+                wave = spec.wave[gdpix,o]
+                flux = spec.flux[gdpix,o]
+                err = spec.err[gdpix,o]
+                mask = spec.mask[gdpix,o]
+            else:
+                gdpix, = np.where(spec.wave > 0)
+                ngdpix = len(gdpix)
+                wave = spec.wave[gdpix]
+                flux = spec.flux[gdpix]
+                err = spec.err[gdpix]
+                mask = spec.mask[gdpix]
+                
             # Get the pixel values to interpolate to
             #pix = utils.wave2pix(wave,fwave)
             #gd, = np.where(np.isfinite(pix))
@@ -211,29 +224,30 @@ def stackspec(splist):
             #newerr = out[0][1]
             #newmask = out[1][0]
 
-            newflux = dln.interp(wave,flux,fwave,kind='cubic',extrapolate=False)
-            newerr = dln.interp(wave,err,fwave,kind='cubic',extrapolate=False)
-            newmask = dln.interp(wave,mask.astype(float),fwave,kind='cubic',extrapolate=False)            
-            gd, = np.where(np.isfinite(newflux))
+            gd, = np.where((fwave >= np.min(wave)) & (fwave <= np.max(wave)))
+            newflux = dln.interp(wave,flux,fwave[gd],kind='cubic',extrapolate=False)
+            newerr = dln.interp(wave,err,fwave[gd],kind='cubic',extrapolate=False)
+            newmask = dln.interp(wave,mask.astype(float),fwave[gd],kind='cubic',extrapolate=False)            
+            #gd, = np.where(np.isfinite(newflux))
             
             # From output flux, get continuum to remove, so that all spectra are
             #   on same scale. We'll later multiply in the median continuum
             #newflux = out[0][0]
-            stack.cont[i,gd,o] = gaussian_filter(median_filter(newflux[gd],[msmlen],mode='reflect'),gsmlen)
+            stack.cont[i,gd] = gaussian_filter(median_filter(newflux,[msmlen],mode='reflect'),gsmlen)
 
             # Load interpolated spectra into output stack
-            stack.wave[0:len(fwave),o] = fwave
-            stack.flux[i,gd,o] = newflux[gd] / stack.cont[i,gd,o]
-            stack.err[i,gd,o] = newerr[gd] / stack.cont[i,gd,o]
+            #stack.wave[0:len(fwave)] = fwave
+            stack.flux[i,gd] += newflux / stack.cont[i,gd]
+            stack.err[i,gd] += newerr / stack.cont[i,gd]
             # For mask, set bits where interpolated value is below some threshold to "good"
-            goodmask, = np.where(newmask[gd] < 0.5)
+            goodmask, = np.where(newmask < 0.5)
             if len(goodmask)>0:
-                stack.mask[i,gd[goodmask],o] = False
+                stack.mask[i,gd[goodmask]] = False
 
             # Set ERR of bad pixels to 1e30
-            badpix, = np.where(stack.mask[i,:,o])
+            badpix, = np.where(stack.mask[i,:])
             if len(badpix)>0:
-                stack.err[i,badpix,o] = 1e30
+                stack.err[i,badpix] = 1e30
                 
     # Create final spectrum
     zeros = np.zeros(splist[0].flux.shape)
@@ -242,17 +256,16 @@ def stackspec(splist):
     comb.cont = zeros.copy()
     
     # Pixel-by-pixel weighted average
-    for o in range(norder):
-        cont = np.mean(stack.cont[:,:,o],axis=0)
-        comb.flux[:,o] = np.sum(stack.flux[:,:,o]/stack.err[:,:,o]**2,axis=0)/np.sum(1./stack.err[:,:,o]**2,axis=0) * cont
-        comb.err[:,o] =  np.sqrt(1./np.sum(1./stack.err[:,:,o]**2,axis=0)) * cont
-        comb.mask[:,o] = np.bitwise_and.reduce(stack.mask[:,:,o],0)
-        comb.cont[:,o] = cont
+    cont = np.mean(stack.cont,axis=0)
+    comb.flux = np.sum(stack.flux/stack.err**2,axis=0)/np.sum(1./stack.err**2,axis=0) * cont
+    comb.err =  np.sqrt(1./np.sum(1./stack.err**2,axis=0)) * cont
+    comb.mask = np.bitwise_and.reduce(stack.mask,0)
+    comb.cont = cont
         
     return comb,stack
 
 
-def reduce(obsname,outdir='./',logger=None):
+def reduce(obsname,outdir='./',logger=None,clobber=False):
     """ This reduces the JWST NIRSpec MSA data """
 
     if outdir.endswith('/')==False: outdir+='/'
@@ -292,50 +305,58 @@ def reduce(obsname,outdir='./',logger=None):
         
         # Loop over exposures and extract the spectra
         expspec = []
-        sourceids = []
+        sourcenames = []
         for i in range(nexp):
             expname = expnames[i]
             print(' ')
             print('------------------------------------')            
             print('EXPOSURE '+str(i+1)+' '+expname)
             print('------------------------------------')
-            speclist = extractexp(expname,outdir=odir)
-            srcid = [s.source_id for s in speclist]
+            speclist = extractexp(expname,outdir=odir,clobber=clobber)
+            srcname = [s.source_name for s in speclist]
             expspec.append(speclist)
-            sourceids += srcid
+            sourcenames += srcname
 
-        # Stack spectra from multiple exposures
-        if nexp>1:
-            print('Combining spectra from multiple exposures')
-            # Loop over sources
-            sourceid = np.unique(np.array(sourceids))
-            nsources = len(sourceid)
-            for i in range(nsources):
-                srcid = sourceid[i]
+        # Loop over sources
+        print('Combining spectra')
+        sourcenames = np.unique(np.array(sourcenames))
+        nsources = len(sourcenames)
+        for i in range(nsources):
+            srcname = sourcenames[i]
+            print(i+1,srcname)
+            
+            # Stack spectra from multiple exposures
+            if nexp>1:
                 # Loop over exposures
                 splist = []
-                for e in rang(nexp):
+                for e in range(nexp):
                     especlist = expspec[e]  # list of all spectra from this exposures
-                    esourceid = np.array([s.source_id for s in especlist])
-                    ind, = np.where(esourceid==srcid)
+                    esourcename = np.array([s.source_name for s in especlist])
+                    ind, = np.where(esourcename==srcname)
                     if len(ind)>0:
                         splist.append(especlist[ind[0]])
-
+                        
                 # Do the stacking
-                combsp,stack = stackspec(splist)
+                if len(splist)>1:
+                    print('Combining spectra from multiple exposures')
+                    combsp,stack = stackspec(splist)
+                else:
+                    combsp = splist[0]
+            else:
+                combsp = splist[0]
                 
-                # Write to file
-                outfile = stackdir+'/'+srcid+'_stack.fits'
-                print('Writing to '+outfile)
-                combsp.write(outfile,overwrite=True)
+            # Write to file
+            outfile = stackdir+'/'+srcname+'_stack.fits'
+            print('Writing to '+outfile)
+            combsp.write(outfile,overwrite=True)
                 
-                import pdb; pdb.set_trace()
+            #import pdb; pdb.set_trace()
             
         import pdb; pdb.set_trace()
 
 
 
-def extractexp(expname,logger=None,outdir='./'):
+def extractexp(expname,logger=None,outdir='./',clobber=False):
     """ This performs 1D-extraction of the spectra in one exposure."""
 
     #if logger is None: logger=dln.basiclogger()
@@ -347,29 +368,70 @@ def extractexp(expname,logger=None,outdir='./'):
         raise ValueError(filename1+' NOT FOUND')
     if os.path.exists(filename2)==False:
         raise ValueError(filename2+' NOT FOUND')
-    print('Loading '+filename1)
-    data1 = datamodels.open(filename1)
-    print('Loading '+filename2)    
-    data2 = datamodels.open(filename2)
 
-    # Get source_ids
-    sourceid1 = np.array([s.source_id for s in data1.slits])
-    sourceid2 = np.array([s.source_id for s in data2.slits])    
-    sourceids = np.unique(np.hstack((sourceid1,sourceid2)))
+    hdu1 = fits.open(filename1)
+    nsources1 = int(len(hdu1)-2/8)
+    sourceid1 = []
+    sourcename1 = []    
+    for i in np.arange(1,len(hdu1)):
+        if hdu1[i].header.get('extname')=='SCI':
+            sourceid1.append(hdu1[i].header['srcalias'])
+            sourcename1.append(hdu1[i].header['srcname']) 
+    sourceid1 = np.array(sourceid1)
+    hdu1.close()
+    hdu2 = fits.open(filename2)
+    sourceid2 = []
+    sourcename2 = []
+    for i in np.arange(1,len(hdu2)):
+        if hdu2[i].header.get('extname')=='SCI':
+            sourceid2.append(hdu2[i].header['srcalias'])
+            sourcename2.append(hdu2[i].header['srcname'])
+    sourceid2 = np.array(sourceid2)
+    hdu2.close()
+    allsourceids = np.hstack((sourceid1,sourceid2))
+    allsourcenames = np.hstack((sourcename1,sourcename2))
+    _,ui = np.unique(allsourceids,return_index=True)
+    sourceids = allsourceids[ui]
+    sourcenames = allsourcenames[ui]
     nsources = len(sourceids)
     print(str(nsources)+' sources')
-
+    
     # Looping over sources
+    data1 = None
+    data2 = None
     speclist = []
     for i in range(nsources):
         sourceid = sourceids[i]
+        sourcename = sourcenames[i]
+        sp = None
         print(' ')
         print('--',i+1,sourceid,'--')
+        
+        # Check if it already exists
+        outfile = outdir+sourcename+'_'+expname+'.fits'
+        if os.path.exists(outfile) and clobber==False:
+            if os.path.getsize(outfile)==0:
+                print(outfile+' is an empty file.')
+                continue
+            print(outfile+' already exists. Loading')            
+            sp = doppler.read(outfile)
+            speclist.append(sp)
+            continue
+
+        if data1 is None:
+            print('Loading '+filename1)
+            data1 = datamodels.open(filename1)
+        if data2 is None:
+            print('Loading '+filename2)    
+            data2 = datamodels.open(filename2)
+        
         # NRS1
+        sp1 = None
         ind1, = np.where(sourceid1==sourceid)
         if len(ind1)>0:
             sp1 = extract.extract_slit(data1,data1.slits[ind1[0]])
         # NRS2
+        sp2 = None
         ind2, = np.where(sourceid2==sourceid)
         if len(ind2)>0:
             sp2 = extract.extract_slit(data2,data2.slits[ind2[0]])
@@ -382,14 +444,15 @@ def extractexp(expname,logger=None,outdir='./'):
             if sp2 is not None: sp=sp2            
             
         # Save the file
-        outfile = outdir+sp.source_name+'_'+expname+'.fits'
-        print('Writing to '+outfile)
-        sp.write(outfile,overwrite=True)
-        
-        speclist.append(sp)
-
+        if sp is not None:
+            print('Writing to '+outfile)            
+            sp.write(outfile,overwrite=True)
+            speclist.append(sp)
+        else:
+            dln.touch(outfile)
+            
     # Close the files
-    data1.close()
-    data2.close()
+    if data1 is not None: data1.close()
+    if data2 is not None: data2.close()
         
     return speclist

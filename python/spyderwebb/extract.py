@@ -27,10 +27,13 @@ def profilefit(x,y):
     if np.sum((bnds[0][:] >= bnds[1][:]))>0:
         print('problem in profilefit')
         import pdb; pdb.set_trace()
-    
-    pars,cov = dln.gaussfit(x,y,initpar=p0,bounds=bnds,binned=True)
-    perror = np.sqrt(np.diag(cov))
-    return pars,perror
+
+    try:
+        pars,cov = dln.gaussfit(x,y,initpar=p0,bounds=bnds,binned=True)
+        perror = np.sqrt(np.diag(cov))
+        return pars,perror        
+    except:
+        return None,None
     
 
 def tracing(im,err,ymid=None,step=25,nbin=50):
@@ -78,6 +81,8 @@ def tracing(im,err,ymid=None,step=25,nbin=50):
             print('no pixels')
             import pdb; pdb.set_trace()
         pars,perror = profilefit(yclip,profileclip)
+        if pars is None:
+            continue
         xmnarr.append(xmn)
         yhtarr.append(pars[0])        
         ymidarr.append(pars[1])
@@ -114,6 +119,8 @@ def tracing(im,err,ymid=None,step=25,nbin=50):
             print('no pixels')
             import pdb; pdb.set_trace()
         pars,perror = profilefit(yclip,profileclip)
+        if pars is None:
+            continue        
         xmnarr.append(xmn)
         yhtarr.append(pars[0])        
         ymidarr.append(pars[1])
@@ -418,16 +425,13 @@ def extract_slit(input_model,slit,verbose=False):
         return None
 
     try:
-        torder = 2
         if len(ttab)<3:
             tcoef = np.array([np.median(ttab['y'])])
+            tsigcoef = np.array([np.median(ttab['ysig'])])            
         else:
-            tcoef = robust.polyfit(ttab['x'],ttab['y'],torder)
+            tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
+            tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)            
         ytrace = np.polyval(tcoef,x)
-        if len(ttab)<2:
-            tsigcoef = np.array([np.median(ttab['ysig'])])
-        else:
-            tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)
         ysig = np.polyval(tsigcoef,x)
     except:
         print('tracing coefficient problem')
@@ -462,8 +466,9 @@ def extract_slit(input_model,slit,verbose=False):
     
     # Get the wavelengths
     pmask = (gpsf > 0.01)
-    wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
-        
+    #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
+    wav = np.nansum(wave*gpsf,axis=0)/np.sum(gpsf*np.isfinite(wave*gpsf),axis=0) * 1e4  # convert to Angstroms
+    
     # Apply slit correction
     srcxpos = slit.source_xpos
     srcypos = slit.source_ypos
