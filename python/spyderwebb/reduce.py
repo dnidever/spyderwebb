@@ -188,6 +188,12 @@ def stackspec(splist):
                 flux = spec.flux[gdpix]
                 err = spec.err[gdpix]
                 mask = spec.mask[gdpix]
+
+            # Mask Nan/Inf pixels
+            bdpix, = np.where((~np.isfinite(flux)) | (~np.isfinite(err)))
+            if len(bdpix)>0:
+                flux[bdpix] = 0.0
+                err[bdpix] = 1e30
                 
             # Get the pixel values to interpolate to
             #pix = utils.wave2pix(wave,fwave)
