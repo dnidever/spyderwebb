@@ -260,8 +260,9 @@ def stackspec(splist):
     comb.flux = np.sum(stack.flux/stack.err**2,axis=0)/np.sum(1./stack.err**2,axis=0) * cont
     comb.err =  np.sqrt(1./np.sum(1./stack.err**2,axis=0)) * cont
     comb.mask = np.bitwise_and.reduce(stack.mask,0)
+    comb.err[comb.mask] = 1e30
     comb.cont = cont
-        
+    
     return comb,stack
 
 
@@ -350,9 +351,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             print('Writing to '+outfile)
             combsp.write(outfile,overwrite=True)
                 
-            #import pdb; pdb.set_trace()
-            
-        import pdb; pdb.set_trace()
+    print('Done')
 
 
 
