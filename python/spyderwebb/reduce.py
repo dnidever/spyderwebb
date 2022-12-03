@@ -41,6 +41,9 @@ import doppler
 from doppler.spec1d import Spec1D
 from . import extract, utils, sincint
 
+import matplotlib
+import matplotlib.pyplot as plt
+from dlnpyutils import plotting as pl
 
 def getexpinfo(obsname,logger=None):
 
@@ -158,7 +161,7 @@ def stackspec(splist):
     izeros = np.zeros([nspec,nfpix],bool)
     stack = Spec1D(np.zeros(10),wave=np.zeros(10))
     stack.flux = zeros
-    stack.err = zeros.copy()
+    stack.err = zeros.copy()+1e30
     stack.wave = fwave
     stack.mask = np.ones([nspec,nfpix],bool)
     stack.cont = zeros.copy()
@@ -194,7 +197,8 @@ def stackspec(splist):
             if len(bdpix)>0:
                 flux[bdpix] = 0.0
                 err[bdpix] = 1e30
-                
+                mask[bdpix] = True
+                                
             # Get the pixel values to interpolate to
             #pix = utils.wave2pix(wave,fwave)
             #gd, = np.where(np.isfinite(pix))
@@ -240,11 +244,11 @@ def stackspec(splist):
             #   on same scale. We'll later multiply in the median continuum
             #newflux = out[0][0]
             stack.cont[i,gd] = gaussian_filter(median_filter(newflux,[msmlen],mode='reflect'),gsmlen)
-
+            
             # Load interpolated spectra into output stack
             #stack.wave[0:len(fwave)] = fwave
-            stack.flux[i,gd] += newflux / stack.cont[i,gd]
-            stack.err[i,gd] += newerr / stack.cont[i,gd]
+            stack.flux[i,gd] = newflux / stack.cont[i,gd]
+            stack.err[i,gd] = newerr / stack.cont[i,gd]
             # For mask, set bits where interpolated value is below some threshold to "good"
             goodmask, = np.where(newmask < 0.5)
             if len(goodmask)>0:
@@ -268,7 +272,7 @@ def stackspec(splist):
     comb.mask = np.bitwise_and.reduce(stack.mask,0)
     comb.err[comb.mask] = 1e30
     comb.cont = cont
-    
+
     return comb,stack
 
 
@@ -279,6 +283,9 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
     #if logger is None: logger=dln.basiclogger()
     stackdir = outdir+'stack/'
     if os.path.exists(stackdir)==False: os.makedirs(stackdir)
+    stackplotdir = stackdir+'plots/'
+    if os.path.exists(stackplotdir)==False:
+        os.makedirs(stackplotdir)
     
     # Get exposures information
     edict = getexpinfo(obsname)
@@ -319,7 +326,12 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             print('------------------------------------')            
             print('EXPOSURE '+str(i+1)+' '+expname)
             print('------------------------------------')
-            speclist = extractexp(expname,outdir=odir,clobber=clobber)
+            if nexp>1:
+                if i==0:
+                    backexpname = expnames[1]
+                else:
+                    backexpname = expnames[0]
+            speclist = extractexp(expname,backexpname,outdir=odir,clobber=clobber)
             srcname = [s.source_name for s in speclist]
             expspec.append(speclist)
             sourcenames += srcname
@@ -356,25 +368,46 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             outfile = stackdir+'/'+srcname+'_stack.fits'
             print('Writing to '+outfile)
             combsp.write(outfile,overwrite=True)
-                
+
+            # Save a plot
+            matplotlib.use('Agg')
+            fig = plt.figure(figsize=(12,7))
+            plt.clf()
+            plt.plot(combsp.wave,combsp.flux)
+            plt.xlabel('X')
+            plt.ylabel('Flux')
+            plt.savefig(stackplotdir+'/'+srcname+'_stack_flux.png',bbox_inches='tight')
+            matplotlib.use('MacOSX')
+            
     print('Done')
 
 
 
-def extractexp(expname,logger=None,outdir='./',clobber=False):
+def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
     """ This performs 1D-extraction of the spectra in one exposure."""
 
     #if logger is None: logger=dln.basiclogger()
-
+    plotdir = outdir+'/plots/'
+    if os.path.exists(plotdir)==False:
+        os.makedirs(plotdir)
+    
     # Load the calibrated file    
-    filename1 = expname+'_nrs1/'+expname+'_nrs1_cal.fits'
-    filename2 = expname+'_nrs2/'+expname+'_nrs2_cal.fits'
-    if os.path.exists(filename1)==False:
-        raise ValueError(filename1+' NOT FOUND')
-    if os.path.exists(filename2)==False:
-        raise ValueError(filename2+' NOT FOUND')
-
-    hdu1 = fits.open(filename1)
+    calfilename1 = expname+'_nrs1/'+expname+'_nrs1_cal.fits'
+    ratefilename1 = expname+'_nrs1/'+expname+'_nrs1_rate.fits'    
+    calfilename2 = expname+'_nrs2/'+expname+'_nrs2_cal.fits'
+    ratefilename2 = expname+'_nrs2/'+expname+'_nrs2_rate.fits'
+    for f in [calfilename1,ratefilename1,calfilename1,ratefilename1]:
+        if os.path.exists(f)==False:
+            raise ValueError(f+' NOT FOUND')
+    if backexpname is not None:
+        bratefilename1 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'
+        bratefilename2 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'        
+        if os.path.exists(bratefilename1)==False:
+            raise ValueError(bratefilename1+' NOT FOUND')
+        if os.path.exists(bratefilename2)==False:
+            raise ValueError(bratefilename2+' NOT FOUND')        
+        
+    hdu1 = fits.open(calfilename1)
     nsources1 = int(len(hdu1)-2/8)
     sourceid1 = []
     sourcename1 = []    
@@ -384,7 +417,7 @@ def extractexp(expname,logger=None,outdir='./',clobber=False):
             sourcename1.append(hdu1[i].header['srcname']) 
     sourceid1 = np.array(sourceid1)
     hdu1.close()
-    hdu2 = fits.open(filename2)
+    hdu2 = fits.open(calfilename2)
     sourceid2 = []
     sourcename2 = []
     for i in np.arange(1,len(hdu2)):
@@ -402,8 +435,7 @@ def extractexp(expname,logger=None,outdir='./',clobber=False):
     print(str(nsources)+' sources')
     
     # Looping over sources
-    data1 = None
-    data2 = None
+    data1,data2,rate1,rate2,brate1,brate2 = None,None,None,None,None,None
     speclist = []
     for i in range(nsources):
         sourceid = sourceids[i]
@@ -424,22 +456,35 @@ def extractexp(expname,logger=None,outdir='./',clobber=False):
             continue
 
         if data1 is None:
-            print('Loading '+filename1)
-            data1 = datamodels.open(filename1)
+            print('Loading '+calfilename1)
+            data1 = datamodels.open(calfilename1)
         if data2 is None:
-            print('Loading '+filename2)    
-            data2 = datamodels.open(filename2)
-        
+            print('Loading '+calfilename2)    
+            data2 = datamodels.open(calfilename2)
+        if rate1 is None:
+            rate1 = fits.open(ratefilename1)
+        if rate2 is None:
+            rate2 = fits.open(ratefilename2)            
+        if backexpname is not None:
+            if brate1 is None:
+                brate1 = fits.open(bratefilename1)
+            if brate2 is None:
+                brate2 = fits.open(bratefilename2)                
+            
+        outfile = outdir+sourcename+'_'+expname+'.fits'
+                
         # NRS1
         sp1 = None
         ind1, = np.where(sourceid1==sourceid)
         if len(ind1)>0:
-            sp1 = extract.extract_slit(data1,data1.slits[ind1[0]])
+            plotbase = plotdir+sourcename+'_'+expname+'_nrs1'
+            sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],rate1,brate1,plotbase=plotbase)
         # NRS2
         sp2 = None
         ind2, = np.where(sourceid2==sourceid)
         if len(ind2)>0:
-            sp2 = extract.extract_slit(data2,data2.slits[ind2[0]])
+            plotbase = plotdir+sourcename+'_'+expname+'_nrs2'
+            sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],rate2,brate2,plotbase=plotbase)
 
         # Join the two spectra together
         if sp1 is not None and sp2 is not None:
@@ -459,5 +504,9 @@ def extractexp(expname,logger=None,outdir='./',clobber=False):
     # Close the files
     if data1 is not None: data1.close()
     if data2 is not None: data2.close()
-        
+    if rate1 is not None: rate1.close()
+    if rate2 is not None: rate2.close()
+    if brate1 is not None: brate1.close()
+    if brate2 is not None: brate2.close()        
+    
     return speclist
