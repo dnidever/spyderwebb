@@ -435,7 +435,7 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     goodpix, = np.where((np.sum(np.isfinite(slit.data),axis=0)>0) & (np.sum(slit.err>=0,axis=0)>0))
     if len(goodpix)==0:
         print('No good pixels')
-        return None
+        return None,None
     xlo = goodpix[0]
     xhi = goodpix[-1]
     xstart = slit.xstart+xlo
@@ -491,7 +491,7 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
         
     if np.sum(nslgood)==0:
         print('No data to extract')
-        return None
+        return None,None
     
     ## Get the reference file
     if True:
@@ -596,7 +596,7 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
 
     if len(slttab)==0:
         print('Problem - no trace found')
-        return None
+        return None,None
 
     try:
         if len(slttab)<3:
@@ -617,9 +617,6 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     yy = np.arange(ny).reshape(-1,1) + np.zeros(nx).reshape(1,-1)
     slmask = ((yy >= (slytrace-ybin)) & (yy <= (slytrace+ybin)))
 
-    # Boxcar extraction
-    slboxflux = np.nansum(slmask*slim,axis=0)
-    
     # Build Gaussian PSF model
     y = np.arange(ny)
     yy = y.reshape(-1,1) + np.zeros(nx).reshape(1,-1)
@@ -630,13 +627,23 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
 
     # Number of good pixels per column with good PSF
     slngood = np.sum((slgpsf>0.01)*np.isfinite(slim),axis=0)
-    
-    # Optimal extraction
-    sloflux,slofluxerr,slotrace,slopsf = extract_optimal(slim*slmask,slytrace,imerr=slerr)
 
-    # GAUSSIAN extraction looks better!
-    #flux = gflux
-    #fluxerr = gfluxerr
+    # Optimal extraction
+    sloflux1,slofluxerr1,slotrace1,slopsf1 = extract_optimal(slim*slmask,slytrace,imerr=slerr)
+
+    # Fix bad pixels using the optimal PSF
+    slfixim,slfixmask,slfixflux,slfixfluxerr = fixbadpixels(slim,slerr,slopsf1)
+
+    # REJECT BAD PIXELS and redo the optimal extraction
+    sloflux,slofluxerr,slotrace,slopsf = extract_optimal(slfixim*slmask,slytrace,imerr=slerr)
+
+    # Boxcar extraction of the fixed image
+    slboxflux = np.nansum(slmask*slfixim,axis=0)
+
+    # Optimal extraction looks a little bit better than the boxcar extraction
+    #  lower scatter
+    slflux = sloflux
+    slfluxerr = slofluxerr
     
     # Get the wavelengths
     slpmask = (slgpsf > 0.01)
@@ -656,6 +663,49 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     pl.oplot(slytrace,c='red')
     plt.savefig(plotbase+'_slitopsf.png',bbox_inches='tight')
     matplotlib.use('MacOSX')
+
+   
+    # Get the wavelengths
+    slpmask = (slopsf > 0.01)
+    #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
+    slwav = np.nansum(slwave*slopsf,axis=0)/np.sum(slopsf*np.isfinite(slwave*slopsf),axis=0) * 1e4  # convert to Angstroms
+
+    # Apply slit correction
+    srcxpos = slit.source_xpos
+    srcypos = slit.source_ypos
+    # SLIT correction, srcxpos is source position in slit
+    # the slit is 2 pixels wide
+    sldwave = np.gradient(slwav)
+    slnewwav = slwav+2*srcxpos*sldwave
+    print('Applying slit correction: %.2f pixels' % (2*srcxpos))
+
+    # Add the LSF information
+    #  we are essentially working in a slit-less spectrograph regime
+    #  the LSF is set by the seeing
+    slwsig = slysig*sldwave
+    gdw, = np.where(np.isfinite(slwav) & np.isfinite(slwsig))
+    slwsigcoef = np.polyfit(slwav[gdw],slwsig[gdw],1)
+    
+    # Put it all together
+    slsp = Spec1D(slflux,err=slfluxerr,wave=slwav,mask=(slfluxerr>1e20),instrument='NIRSpec',
+                  lsfpars=slwsigcoef[::-1],lsftype='Gaussian',lsfxtype='wave')
+    slsp.date = input_model.meta.date
+    slsp.jd = Time(input_model.meta.date).jd
+    slsp.ytrace = slytrace
+    slsp.source_name = slit.source_name
+    slsp.source_id = slit.source_id
+    slsp.slitlet_id = slit.slitlet_id
+    slsp.source_ra = slit.source_ra
+    slsp.source_dec = slit.source_dec
+    slsp.xstart = xstart
+    slsp.xsize = xsize
+    slsp.ystart = slit.ystart
+    slsp.ysize = slit.ysize
+    slsp.offset = offset
+    slsp.tcoef = sltcoef
+    slsp.tsigcoef = sltsigcoef
+    
+
     
     # Extract the RATE IMAGE with background subtraction
     #---------------------------------------------------
@@ -673,7 +723,7 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
         goodpix = ((sim/serr>3) & (slim/slerr>3) & slpmask)
     if goodpix.sum()==0:
         print('No good pixels in common to CAL and RATE image')
-        return None
+        return None,None
     scale = np.nanmedian(slim[goodpix]/sim[goodpix])
     print('scale = ',scale)
     sim *= scale
@@ -731,7 +781,7 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
 
     if len(ttab)==0:
         print('No trace points')
-        return None
+        return None,None
     
     try:
         if len(ttab)<3:
@@ -837,9 +887,17 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     print('Applying slit correction: %.2f pixels' % (2*srcxpos))
 
     # Apply relative flux calibration correction
-    
+
+    # Add the LSF information
+    #  we are essentially working in a slit-less spectrograph regime
+    #  the LSF is set by the seeing
+    wsig = ysig*dwave
+    gdw, = np.where(np.isfinite(wav) & np.isfinite(wsig))
+    wsigcoef = np.polyfit(wav[gdw],wsig[gdw],1)
+        
     # Put it all together
-    sp = Spec1D(flux,err=fluxerr,wave=wav,mask=(fluxerr>1e20),instrument='NIRSpec')
+    sp = Spec1D(flux,err=fluxerr,wave=wav,mask=(fluxerr>1e20),instrument='NIRSpec',
+                lsfpars=wsigcoef[::-1],lsftype='Gaussian',lsfxtype='wave')
     sp.date = input_model.meta.date
     sp.jd = Time(input_model.meta.date).jd
     sp.ytrace = ytrace
@@ -856,4 +914,4 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     sp.tcoef = tcoef
     sp.tsigcoef = tsigcoef
     
-    return sp
+    return slsp,sp

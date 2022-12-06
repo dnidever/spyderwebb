@@ -281,11 +281,6 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
 
     if outdir.endswith('/')==False: outdir+='/'
     #if logger is None: logger=dln.basiclogger()
-    stackdir = outdir+'stack/'
-    if os.path.exists(stackdir)==False: os.makedirs(stackdir)
-    stackplotdir = stackdir+'plots/'
-    if os.path.exists(stackplotdir)==False:
-        os.makedirs(stackplotdir)
     
     # Get exposures information
     edict = getexpinfo(obsname)
@@ -306,6 +301,12 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
         odir = outdir+obsid+'/'
         if os.path.exists(odir)==False:
             os.makedirs(odir)
+        stackdir = odir+'stack/'
+        if os.path.exists(stackdir)==False: os.makedirs(stackdir)
+        stackplotdir = stackdir+'plots/'
+        if os.path.exists(stackplotdir)==False:
+            os.makedirs(stackplotdir)
+            
         ind, = np.where(obsids==obsid)
         nind = len(ind)
         expnames = [edict[e]['EXPNAME'] for e in ind]
@@ -318,7 +319,8 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
         print('---------------------------------------------') 
         
         # Loop over exposures and extract the spectra
-        expspec = []
+        slexpspec = []
+        expspec = []        
         sourcenames = []
         for i in range(nexp):
             expname = expnames[i]
@@ -331,9 +333,10 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
                     backexpname = expnames[1]
                 else:
                     backexpname = expnames[0]
-            speclist = extractexp(expname,backexpname,outdir=odir,clobber=clobber)
+            slspeclist,speclist = extractexp(expname,backexpname,outdir=odir,clobber=clobber)
             srcname = [s.source_name for s in speclist]
-            expspec.append(speclist)
+            slexpspec.append(slspeclist)
+            expspec.append(speclist)            
             sourcenames += srcname
 
         # Loop over sources
@@ -347,36 +350,43 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             # Stack spectra from multiple exposures
             if nexp>1:
                 # Loop over exposures
-                splist = []
+                slsplist = []
+                splist = []                
                 for e in range(nexp):
-                    especlist = expspec[e]  # list of all spectra from this exposures
+                    eslspeclist = slexpspec[e]  # list of all spectra from this exposures
+                    especlist = expspec[e]  # list of all spectra from this exposures                    
                     esourcename = np.array([s.source_name for s in especlist])
                     ind, = np.where(esourcename==srcname)
                     if len(ind)>0:
-                        splist.append(especlist[ind[0]])
+                        slsplist.append(eslspeclist[ind[0]])
+                        splist.append(especlist[ind[0]])                        
                         
                 # Do the stacking
                 if len(splist)>1:
                     print('Combining spectra from multiple exposures')
-                    combsp,stack = stackspec(splist)
+                    combslsp,slstack = stackspec(slsplist)
+                    combsp,stack = stackspec(splist)                    
                 else:
-                    combsp = splist[0]
+                    combslsp = slsplist[0]
+                    combsp = splist[0]                    
             else:
-                combsp = splist[0]
+                combslsp = slsplist[0]
+                combsp = splist[0]                
                 
             # Write to file
-            outfile = stackdir+'/'+srcname+'_stack.fits'
+            outfile = stackdir+'/spStack-'+srcname+'_cal.fits'
             print('Writing to '+outfile)
-            combsp.write(outfile,overwrite=True)
+            combslsp.write(outfile,overwrite=True)
+            combsp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
 
             # Save a plot
             matplotlib.use('Agg')
             fig = plt.figure(figsize=(12,7))
             plt.clf()
-            plt.plot(combsp.wave,combsp.flux)
+            plt.plot(combslsp.wave,combslsp.flux)
             plt.xlabel('X')
             plt.ylabel('Flux')
-            plt.savefig(stackplotdir+'/'+srcname+'_stack_flux.png',bbox_inches='tight')
+            plt.savefig(stackplotdir+'/spStack-'+srcname+'_cal_flux.png',bbox_inches='tight')
             matplotlib.use('MacOSX')
             
     print('Done')
@@ -436,7 +446,8 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
     
     # Looping over sources
     data1,data2,rate1,rate2,brate1,brate2 = None,None,None,None,None,None
-    speclist = []
+    slspeclist = []
+    speclist = []    
     for i in range(nsources):
         sourceid = sourceids[i]
         sourcename = sourcenames[i]
@@ -445,7 +456,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
         print('--',i+1,sourceid,'--')
         
         # Check if it already exists
-        outfile = outdir+sourcename+'_'+expname+'.fits'
+        outfile = outdir+'spVisit-'+sourcename+'_'+expname+'_cal.fits'
         if os.path.exists(outfile) and clobber==False:
             if os.path.getsize(outfile)==0:
                 print(outfile+' is an empty file.')
@@ -470,34 +481,39 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
                 brate1 = fits.open(bratefilename1)
             if brate2 is None:
                 brate2 = fits.open(bratefilename2)                
-            
-        outfile = outdir+sourcename+'_'+expname+'.fits'
                 
         # NRS1
-        sp1 = None
+        slsp1,sp1 = None,None
         ind1, = np.where(sourceid1==sourceid)
         if len(ind1)>0:
             plotbase = plotdir+sourcename+'_'+expname+'_nrs1'
-            sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],rate1,brate1,plotbase=plotbase)
+            slsp1,sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],rate1,brate1,plotbase=plotbase)
         # NRS2
-        sp2 = None
+        slsp2,sp2 = None,None
         ind2, = np.where(sourceid2==sourceid)
         if len(ind2)>0:
             plotbase = plotdir+sourcename+'_'+expname+'_nrs2'
-            sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],rate2,brate2,plotbase=plotbase)
+            slsp2,sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],rate2,brate2,plotbase=plotbase)
 
         # Join the two spectra together
         if sp1 is not None and sp2 is not None:
-            sp = joinspec(sp1,sp2)
+            slsp = joinspec(slsp1,slsp2)
+            sp = joinspec(sp1,sp2)            
         else:
-            if sp1 is not None: sp=sp1
-            if sp2 is not None: sp=sp2            
+            if sp1 is not None:
+                slsp = slsp1
+                sp = sp1                
+            if sp2 is not None:
+                slsp = slsp2
+                sp = sp2                
             
         # Save the file
         if sp is not None:
-            print('Writing to '+outfile)            
-            sp.write(outfile,overwrite=True)
-            speclist.append(sp)
+            print('Writing to '+outfile)
+            slsp.write(outfile,overwrite=True)
+            sp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
+            slspeclist.append(slsp)
+            speclist.append(sp)            
         else:
             dln.touch(outfile)
             
@@ -509,4 +525,4 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
     if brate1 is not None: brate1.close()
     if brate2 is not None: brate2.close()        
     
-    return speclist
+    return slspeclist,speclist
