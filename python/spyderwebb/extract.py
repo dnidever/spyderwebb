@@ -421,7 +421,517 @@ def fixbadpixels(im,err,psf):
     return fixim,fixmask,fixflux,fixfluxerr
 
 
-def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='extract'):
+
+def extract_slit_multi(input_model,slit,backslit=None,verbose=False,plotbase='extract'):
+    """ Extract one slit."""
+
+    print('source_name:',slit.source_name)
+    print('source_id:',slit.source_id)
+    print('slitlet_id:',slit.slitlet_id)
+    print('source ra/dec:',slit.source_ra,slit.source_dec)
+    print('ny/nx:',*slit.data.shape)
+
+    # Clip the X ends
+    #  sometimes there are fully masked columns at the ends
+    goodpix, = np.where((np.sum(np.isfinite(slit.data),axis=0)>0) & (np.sum(slit.err>=0,axis=0)>0))
+    if len(goodpix)==0:
+        print('No good pixels')
+        return None,None
+    xlo = goodpix[0]
+    xhi = goodpix[-1]
+    xstart = slit.xstart+xlo
+    xsize = xhi-xlo+1
+    if xlo>0:
+        print('Trimming first '+str(xlo)+' fully masked columns')
+    if xhi < (slit.xsize-1):
+        print('Trimming last '+str((slit.xsize-1)-xhi)+' fully masked columns')
+    
+    # Get the data
+    slim = slit.data.copy()[:,xlo:xhi+1]
+    slerr = slit.err.copy()[:,xlo:xhi+1]
+    slwave = slit.wavelength[:,xlo:xhi+1]
+    ny,nx = slim.shape
+    slbad = (slerr<=0)
+    slim[slbad] = np.nan
+    slerr[slbad] = 1e30
+    # Number of good pixels per column
+    nslgood = np.sum(~slbad,axis=0)
+    
+    # Extend the wavelength information across the full image
+    #  normally it only covers one section
+    wave = slwave.copy()
+    y = np.arange(ny)
+    ngoodwave = np.sum(np.isfinite(wave),axis=0)
+    #wcoef = np.zeros([nx,2],float)
+    #for i in range(nx):
+    #    if ngoodwave[i]>2:
+    #        w = wave[:,i]            
+    #        good = np.isfinite(w)
+    #        bad = ~np.isfinite(w)
+    #        wcoef1 = np.polyfit(y[good],w[good],1)
+    #        wcoef[i,:] = wcoef1
+    #        wave[bad,i] = np.polyval(wcoef1,y[bad])
+        
+    if np.sum(nslgood)==0:
+        print('No data to extract')
+        return None,None
+    
+    ## Get the reference file
+    if True:
+        step = Extract1dStep()
+        extract_ref = step.get_reference_file(input_model,'extract1d')
+        extract_ref_dict = jextract.open_extract1d_ref(extract_ref, input_model.meta.exposure.type)
+    
+        # Get extraction parameters, from extract.create_extraction()
+        slitname = slit.name
+        sp_order = jextract.get_spectral_order(slit)        
+        meta_source = slit
+        smoothing_length = None
+        use_source_posn = True
+        extract_params = jextract.get_extract_parameters(extract_ref_dict,meta_source,slitname,
+                                                         sp_order,input_model.meta,step.smoothing_length,
+                                                         step.bkg_fit,step.bkg_order,use_source_posn)
+        extract_params['dispaxis'] = extract_ref_dict['apertures'][0]['dispaxis']
+    
+        # Get extraction model, extract.extract_one_slit()
+        # If there is an extract1d reference file (there doesn't have to be), it's in JSON format.
+        extract_model = jextract.ExtractModel(input_model=input_model, slit=slit, **extract_params)
+        ap = jextract.get_aperture(slim.shape, extract_model.wcs, extract_params)
+        extract_model.update_extraction_limits(ap)
+        
+        if extract_model.use_source_posn:
+            #if prev_offset == OFFSET_NOT_ASSIGNED_YET:  # Only call this method for the first integration.
+            offset, locn = extract_model.offset_from_offset(input_model, slit)
+    
+            #if offset is not None and locn is not None:
+            #    log.debug(f"Computed source offset={offset:.2f}, source location={locn:.2f}")
+    
+            if not extract_model.use_source_posn:
+                offset = 0.
+            #else:
+            #    offset = prev_offset
+        else:
+            offset = 0.
+    
+        extract_model.position_correction = offset
+    
+        # Add the source position offset to the polynomial coefficients, or shift the reference image
+        # (depending on the type of reference file).
+        extract_model.add_position_correction(slim.shape)
+        extract_model.log_extraction_parameters()
+        extract_model.assign_polynomial_limits()
+    
+        # get disp_range, from extract.ExtractModel.extract()
+        if extract_model.dispaxis == jextract.HORIZONTAL:
+            slice0 = int(round(extract_model.xstart))
+            slice1 = int(round(extract_model.xstop)) + 1
+            #x_array = np.arange(slice0, slice1, dtype=np.float64)
+            #y_array = np.empty(x_array.shape, dtype=np.float64)
+            #y_array.fill((extract_model.ystart + extract_model.ystop) / 2.)
+        else:
+            slice0 = int(round(extract_model.ystart))
+            slice1 = int(round(extract_model.ystop)) + 1
+            #y_array = np.arange(slice0, slice1, dtype=np.float64)
+            #x_array = np.empty(y_array.shape, dtype=np.float64)
+            #x_array.fill((extract_model.xstart + extract_model.xstop) / 2.)
+        disp_range = [slice0, slice1]  # Range (slice) of pixel numbers in the dispersion direction.
+          
+        # Get the trace, from extract1d.extract1d()
+        p_src = extract_model.p_src
+        srclim = []                 # this will be a list of lists, like p_src
+        n_srclim = len(p_src)
+    
+        for i in range(n_srclim):
+            lower = p_src[i][0]
+            upper = p_src[i][1]
+            if extract_model.independent_var.startswith("wavelength"):    # OK if 'wavelengths'
+                srclim.append([lower(lambdas), upper(lambdas)])
+            else:
+                # Temporary array for the independent variable.
+                pixels = np.arange(disp_range[0], disp_range[1], dtype=np.float64)
+                srclim.append([lower(pixels), upper(pixels)])
+
+    ## Polynomial coefficients for traces
+    ## y(1024) = 0
+    #coef0 = np.array([ 4.59440169e-06, -1.86120908e-04, -4.83294422e+00])
+    #
+    ## Get peak at X=1024
+    #tot = np.nansum(np.maximum(im,0),axis=1)
+    #yind = np.argmax(tot)
+    ## Trace for this star
+    #coef = coef0.copy()
+    #coef[2] += yind
+    #x = np.arange(nx)
+    #ytrace = np.polyval(coef,x)
+
+    print('offset: ',offset)
+    
+    # Extract the CAL 2D SLIT IMAGE
+    #------------------------------
+
+    # I think the trace is at
+    # ny/2+offset at Y=1024
+    yind = (ny-1)/2+offset
+    
+    # Get the trace
+    x = np.arange(nx)
+    slttab = tracing(slim,slerr,yind)
+
+    if len(slttab)==0:
+        print('Problem - no trace found')
+        return None,None
+
+    try:
+        if len(slttab)<3:
+            sltcoef = np.array([np.median(slttab['y'])])
+            sltsigcoef = np.array([np.median(slttab['ysig'])])            
+        else:
+            sltcoef = robust.polyfit(slttab['x'],slttab['y'],2)
+            sltsigcoef = robust.polyfit(slttab['x'],slttab['ysig'],1)            
+        slytrace = np.polyval(sltcoef,x)
+        slysig = np.polyval(sltsigcoef,x)
+    except:
+        print('tracing coefficient problem')
+        import pdb; pdb.set_trace()
+
+        
+    # Create the mask
+    ybin = 3
+    yy = np.arange(ny).reshape(-1,1) + np.zeros(nx).reshape(1,-1)
+    slmask = ((yy >= (slytrace-ybin)) & (yy <= (slytrace+ybin)))
+
+
+    # Get the background from the background image
+    if backslit is not None:
+        temp1 = sbim.copy()
+        temp1[~mask] = np.nan
+        sky1 = np.nanmedian(temp1,axis=0)
+        diff1 = sbim.copy()-sky1.reshape(1,-1)
+        sig1 = dln.mad(diff1[mask])
+        temp2 = sbim.copy()
+        temp2[(~mask) | (np.abs(diff1)>3*sig1)] = np.nan
+        sky2 = np.nanmean(temp2,axis=0)
+        sky = np.zeros(ny).reshape(-1,1) + sky2.reshape(1,-1)
+    else:
+        sky = np.zeros((ny,nx))
+    sim -= sky   # subtract background
+
+
+    
+    # Build Gaussian PSF model
+    y = np.arange(ny)
+    yy = y.reshape(-1,1) + np.zeros(nx).reshape(1,-1)
+    slgpsf = utils.gauss2dbin(yy,np.ones(nx),slytrace,slysig)
+    slgpsf /= np.sum(slgpsf,axis=0)  # normalize
+    # Gaussian PSF extraction
+    slgflux,slgfluxerr,slsky,slskyerr = extract_psf(slim*slmask,slgpsf,slerr,skyfit=True)
+
+    # Number of good pixels per column with good PSF
+    slngood = np.sum((slgpsf>0.01)*np.isfinite(slim),axis=0)
+
+    # Optimal extraction
+    sloflux1,slofluxerr1,slotrace1,slopsf1 = extract_optimal(slim*slmask,slytrace,imerr=slerr)
+
+    # Fix bad pixels using the optimal PSF
+    slfixim,slfixmask,slfixflux,slfixfluxerr = fixbadpixels(slim,slerr,slopsf1)
+
+    # REJECT BAD PIXELS and redo the optimal extraction
+    sloflux,slofluxerr,slotrace,slopsf = extract_optimal(slfixim*slmask,slytrace,imerr=slerr)
+
+    # Boxcar extraction of the fixed image
+    slboxflux = np.nansum(slmask*slfixim,axis=0)
+
+    # Optimal extraction looks a little bit better than the boxcar extraction
+    #  lower scatter
+    slflux = sloflux
+    slfluxerr = slofluxerr
+    
+    # Get the wavelengths
+    slpmask = (slgpsf > 0.01)
+    #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
+    #wav = np.nansum(slwave*slgpsf,axis=0)/np.sum(slgpsf*np.isfinite(slwave*slgpsf),axis=0) * 1e4  # convert to Angstroms
+
+    # Save some diagnostic plots    
+    matplotlib.use('Agg')
+    fig = plt.figure(figsize=(12,7))
+    medflux = np.nanmedian(sloflux)
+    vmin = -medflux/3.
+    vmax = medflux
+    pl.display(slim,xtitle='X',ytitle='Y',vmin=vmin,vmax=vmax,title='CAL DATA - SLIT_ID '+str(slit.source_id))
+    pl.oplot(slytrace,c='red')
+    plt.savefig(plotbase+'_caldata.png',bbox_inches='tight')
+    pl.display(slopsf,xtitle='X',ytitle='Y',vmin=0,vmax=1.2*np.max(slopsf),title='CAL Optimal PSF - SLIT_ID '+str(slit.source_id))
+    pl.oplot(slytrace,c='red')
+    plt.savefig(plotbase+'_calopsf.png',bbox_inches='tight')
+    # Flux
+    plt.clf()
+    plt.plot(sloflux,label='Optimal',linewidth=2)
+    plt.plot(slgflux,label='Gaussian')
+    plt.plot(slboxflux,label='Boxcar',linestyle='dashed')
+    plt.ylim(-medflux/3.,1.8*medflux)
+    plt.xlabel('X')
+    plt.ylabel('Flux')
+    plt.legend()
+    plt.savefig(plotbase+'_calflux.png',bbox_inches='tight')
+    matplotlib.use('MacOSX')
+
+   
+    # Get the wavelengths
+    slpmask = (slopsf > 0.01)
+    #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
+    slwav = np.nansum(slwave*slopsf,axis=0)/np.sum(slopsf*np.isfinite(slwave*slopsf),axis=0) * 1e4  # convert to Angstroms
+
+    # Apply slit correction
+    srcxpos = slit.source_xpos
+    srcypos = slit.source_ypos
+    # SLIT correction, srcxpos is source position in slit
+    # the slit is 2 pixels wide
+    sldwave = np.gradient(slwav)
+    slnewwav = slwav+2*srcxpos*sldwave
+    print('Applying slit correction: %.2f pixels' % (2*srcxpos))
+
+    # Add the LSF information
+    #  we are essentially working in a slit-less spectrograph regime
+    #  the LSF is set by the seeing
+    slwsig = slysig*sldwave
+    gdw, = np.where(np.isfinite(slwav) & np.isfinite(slwsig))
+    slwsigcoef = np.polyfit(slwav[gdw],slwsig[gdw],1)
+    
+    # Put it all together
+    slsp = Spec1D(slflux,err=slfluxerr,wave=slwav,mask=(slfluxerr>1e20),instrument='NIRSpec',
+                  lsfpars=slwsigcoef[::-1],lsftype='Gaussian',lsfxtype='wave')
+    slsp.date = input_model.meta.date
+    slsp.jd = Time(input_model.meta.date).jd
+    slsp.ytrace = slytrace
+    slsp.source_name = slit.source_name
+    slsp.source_id = slit.source_id
+    slsp.slitlet_id = slit.slitlet_id
+    slsp.source_ra = slit.source_ra
+    slsp.source_dec = slit.source_dec
+    slsp.xstart = xstart
+    slsp.xsize = xsize
+    slsp.ystart = slit.ystart
+    slsp.ysize = slit.ysize
+    slsp.offset = offset
+    slsp.tcoef = sltcoef
+    slsp.tsigcoef = sltsigcoef
+
+    import pdb; pdb.set_trace()
+    
+    
+    # Extract the RATE IMAGE with background subtraction
+    #---------------------------------------------------
+    
+    # Now use the rate images to do the extraction
+    # the XSTART/YSTART are in 1-based indexing
+    slc = (slice(slit.ystart-1,slit.ystart+slit.ysize-1),slice(xstart-1,xstart+slit.xsize-1))
+    sim = im[slc]
+    serr = err[slc]
+    sbim = bim[slc]
+    sberr = berr[slc]
+    # Measure the scaling factor
+    goodpix = ((sim/serr>5) & (slim/slerr>5) & slpmask)
+    if goodpix.sum()==0:
+        goodpix = ((sim/serr>3) & (slim/slerr>3) & slpmask)
+    if goodpix.sum()==0:
+        print('No good pixels in common to CAL and RATE image')
+        return None,None
+    scale = np.nanmedian(slim[goodpix]/sim[goodpix])
+    print('scale = ',scale)
+    sim *= scale
+    serr *= scale
+    sbim *= scale
+    sberr *= scale
+    ytrace0 = slytrace.copy()
+    mask0 = slpmask.copy()
+    ystart = slit.ystart
+    ysize = slit.ysize
+    
+    # Trace is close to the edge, use larger range
+    if ((ny-1)-np.max(slytrace) < 4) or (np.min(slytrace)<4):
+        if ((ny-1)-np.max(slytrace) < 4):
+            nextend = int(np.ceil(4-((ny-1)-np.max(slytrace))))
+            ystart = slit.ystart
+            ysize = slit.ysize+nextend
+            print('Extending the subimage '+str(nextend)+' pixels at the TOP')
+            # Extend the wavelength array
+            wave = np.vstack((wave,np.zeros([nextend,nx])+np.nan))
+            for i in range(nx):
+                wave[ny:ny+nextend,i] = np.polyval(wcoef[i,:],np.arange(nextend)+ny)
+            # Extend the initial mask
+            mask0 = np.vstack((mask0,np.zeros([nextend,nx],bool)))
+        else:
+            nextend = int(np.floor(4-np.min(slytrace)))
+            ystart = slit.ystart-nextend
+            ysize = slit.ysize+nextend            
+            ytrace0 += nextend
+            print('Extending the subimage '+str(nextend)+' pixels at the BOTTOM')
+            # Extend the wavelength array
+            wave = np.vstack((np.zeros([nextend,nx])+np.nan,wave))
+            for i in range(nx):
+                wave[0:nextend,i] = np.polyval(wcoef[i,:],np.arange(nextend)-nextend)
+            # Extend the initial mask
+            mask0 = np.vstack((np.zeros([nextend,nx],bool),mask0))
+        ny += nextend
+        y = np.arange(ny)
+        yy = y.reshape(-1,1) + np.zeros(nx).reshape(1,-1)        
+        slc = (slice(ystart-1,ystart+ysize-1),slice(xstart-1,xstart+nx-1))
+        sim = im[slc]
+        serr = err[slc]
+        sbim = bim[slc]
+        sberr = berr[slc]
+        sim *= scale
+        serr *= scale
+        sbim *= scale
+        sberr *= scale  
+    
+    # Redo the tracing
+    tmask = dln.convolve(mask0.astype(float),np.ones((3,3)))
+    tmask[tmask>0] /= tmask[tmask>0]   # normalize to 0/1
+    tmask = tmask.astype(bool)
+    ttab = tracing(sim*tmask,serr,np.median(ytrace0))
+
+    if len(ttab)==0:
+        print('No trace points')
+        return None,None
+    
+    try:
+        if len(ttab)<3:
+            tcoef = np.array([np.median(ttab['y'])])
+            tsigcoef = np.array([np.median(ttab['ysig'])])            
+        else:
+            tcoef = robust.polyfit(ttab['x'],ttab['y'],2)
+            tsigcoef = robust.polyfit(ttab['x'],ttab['ysig'],1)            
+        ytrace = np.polyval(tcoef,x)
+        ysig = np.polyval(tsigcoef,x)
+    except:
+        print('tracing coefficient problem')
+        import pdb; pdb.set_trace()
+
+    # Create the mask
+    ybin = 3
+    mask = ((yy >= (ytrace-ybin)) & (yy <= (ytrace+ybin)))
+
+    # Get the background from the background image
+    if bratehdu is not None:
+        temp1 = sbim.copy()
+        temp1[~mask] = np.nan
+        sky1 = np.nanmedian(temp1,axis=0)
+        diff1 = sbim.copy()-sky1.reshape(1,-1)
+        sig1 = dln.mad(diff1[mask])
+        temp2 = sbim.copy()
+        temp2[(~mask) | (np.abs(diff1)>3*sig1)] = np.nan
+        sky2 = np.nanmean(temp2,axis=0)
+        sky = np.zeros(ny).reshape(-1,1) + sky2.reshape(1,-1)
+    else:
+        sky = np.zeros((ny,nx))
+    sim -= sky   # subtract background
+        
+    # Build Gaussian PSF model
+    y = np.arange(ny)
+    yy = y.reshape(-1,1) + np.zeros(nx).reshape(1,-1)
+    gpsf = utils.gauss2dbin(yy,np.ones(nx),ytrace,ysig)
+    gpsf /= np.sum(gpsf,axis=0)  # normalize
+    # Gaussian PSF extraction
+    gflux,gfluxerr,sky,skyerr = extract_psf(sim*mask,gpsf,serr,skyfit=True)
+
+    # Number of good pixels per column with good PSF
+    ngood = np.sum((gpsf>0.01)*np.isfinite(sim),axis=0)
+
+    # Optimal extraction
+    oflux1,ofluxerr1,otrace1,opsf1 = extract_optimal(sim*mask,ytrace,imerr=serr)
+
+    # Fix bad pixels using the optimal PSF
+    fixim,fixmask,fixflux,fixfluxerr = fixbadpixels(sim,serr,opsf1)
+
+    # REJECT BAD PIXELS and redo the optimal extraction
+    oflux,ofluxerr,otrace,opsf = extract_optimal(fixim*mask,ytrace,imerr=serr)
+
+    # Boxcar extraction of the fixed image
+    boxflux = np.nansum(mask*fixim,axis=0)
+
+    # Optimal extraction looks a little bit better than the boxcar extraction
+    #  lower scatter
+    flux = oflux
+    fluxerr = ofluxerr
+
+    # Save some diagnostic plots
+    matplotlib.use('Agg')
+    fig = plt.figure(figsize=(12,7))
+    # Rate data
+    medflux = np.nanmedian(oflux)
+    vmin = -medflux/3.
+    vmax = medflux
+    pl.display(sim,xtitle='X',ytitle='Y',vmin=vmin,vmax=vmax,title='RATE DATA - SLIT_ID '+str(slit.source_id))
+    pl.oplot(ytrace,c='red')
+    plt.savefig(plotbase+'_ratedata.png',bbox_inches='tight')
+    # Rate optimal PSF
+    pl.display(opsf,xtitle='X',ytitle='Y',vmin=0,vmax=0.5,title='RATE Optimal PSF - SLIT_ID '+str(slit.source_id))
+    pl.oplot(ytrace,c='red')
+    plt.savefig(plotbase+'_rateopsf.png',bbox_inches='tight')
+    # Flux
+    plt.clf()
+    plt.plot(oflux,label='Optimal',linewidth=2)
+    plt.plot(gflux,label='Gaussian')
+    plt.plot(boxflux,label='Boxcar',linestyle='dashed')
+    plt.xlabel('X')
+    plt.ylabel('Flux')
+    plt.ylim(-medflux/3.,1.8*medflux)    
+    plt.legend()
+    plt.savefig(plotbase+'_rateflux.png',bbox_inches='tight')
+    matplotlib.use('MacOSX')
+    
+    # Get the wavelengths
+    pmask = (opsf > 0.01)
+    #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
+    wav = np.nansum(wave*opsf,axis=0)/np.sum(opsf*np.isfinite(wave*opsf),axis=0) * 1e4  # convert to Angstroms
+
+    # Should I use boxcar or optimal extraction?
+    # I think boxcar is more precise at high S/N (in the absence of outlier pixels)
+    # while optimal extraction is better at low-S/N
+    
+    # Apply slit correction
+    srcxpos = slit.source_xpos
+    srcypos = slit.source_ypos
+    # SLIT correction, srcxpos is source position in slit
+    # the slit is 2 pixels wide
+    dwave = np.gradient(wav)
+    newwav = wav+2*srcxpos*dwave
+    print('Applying slit correction: %.2f pixels' % (2*srcxpos))
+
+    # Apply relative flux calibration correction
+
+    # Add the LSF information
+    #  we are essentially working in a slit-less spectrograph regime
+    #  the LSF is set by the seeing
+    wsig = ysig*dwave
+    gdw, = np.where(np.isfinite(wav) & np.isfinite(wsig))
+    wsigcoef = np.polyfit(wav[gdw],wsig[gdw],1)
+        
+    # Put it all together
+    sp = Spec1D(flux,err=fluxerr,wave=wav,mask=(fluxerr>1e20),instrument='NIRSpec',
+                lsfpars=wsigcoef[::-1],lsftype='Gaussian',lsfxtype='wave')
+    sp.date = input_model.meta.date
+    sp.jd = Time(input_model.meta.date).jd
+    sp.ytrace = ytrace
+    sp.source_name = slit.source_name
+    sp.source_id = slit.source_id
+    sp.slitlet_id = slit.slitlet_id
+    sp.source_ra = slit.source_ra
+    sp.source_dec = slit.source_dec
+    sp.xstart = xstart
+    sp.xsize = xsize
+    sp.ystart = ystart  # might have been extended
+    sp.ysize = ysize
+    sp.offset = offset
+    sp.tcoef = tcoef
+    sp.tsigcoef = tsigcoef
+    
+    return slsp,sp
+
+
+
+def extract_slit_multi(input_model,slit,ratehdu=None,bratehdu=None,verbose=False,plotbase='extract'):
     """ Extract one slit."""
 
     print('source_name:',slit.source_name)
@@ -476,15 +986,16 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     # Use the DQ information!!!
             
     # Get the "raw" rate data
-    im = ratehdu[1].data
-    err = ratehdu[2].data
-    bad = (err<=0)
-    im[bad] = np.nan
-    err[bad] = 1e30
+    if ratehdu is not None:
+        im = ratehdu[1].data.copy()
+        err = ratehdu[2].data.copy()
+        bad = (err<=0)
+        im[bad] = np.nan
+        err[bad] = 1e30
     # Get the "raw" rate background data
     if bratehdu is not None:
-        bim = bratehdu[1].data
-        berr = bratehdu[2].data    
+        bim = bratehdu[1].data.copy()
+        berr = bratehdu[2].data.copy()
         bbad = (berr<=0)
         bim[bbad] = np.nan
         berr[bbad] = 1e30
@@ -656,12 +1167,22 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     medflux = np.nanmedian(sloflux)
     vmin = -medflux/3.
     vmax = medflux
-    pl.display(slim,xtitle='X',ytitle='Y',vmin=vmin,vmax=vmax,title='SLIT CAL DATA - SLIT_ID '+str(slit.source_id))
+    pl.display(slim,xtitle='X',ytitle='Y',vmin=vmin,vmax=vmax,title='CAL DATA - SLIT_ID '+str(slit.source_id))
     pl.oplot(slytrace,c='red')
-    plt.savefig(plotbase+'_slitdata.png',bbox_inches='tight')
-    pl.display(slopsf,xtitle='X',ytitle='Y',vmin=0,vmax=1.2*np.max(slopsf),title='SLIT CAL Optimal PSF - SLIT_ID '+str(slit.source_id))
+    plt.savefig(plotbase+'_caldata.png',bbox_inches='tight')
+    pl.display(slopsf,xtitle='X',ytitle='Y',vmin=0,vmax=1.2*np.max(slopsf),title='CAL Optimal PSF - SLIT_ID '+str(slit.source_id))
     pl.oplot(slytrace,c='red')
-    plt.savefig(plotbase+'_slitopsf.png',bbox_inches='tight')
+    plt.savefig(plotbase+'_calopsf.png',bbox_inches='tight')
+    # Flux
+    plt.clf()
+    plt.plot(sloflux,label='Optimal',linewidth=2)
+    plt.plot(slgflux,label='Gaussian')
+    plt.plot(slboxflux,label='Boxcar',linestyle='dashed')
+    plt.ylim(-medflux/3.,1.8*medflux)
+    plt.xlabel('X')
+    plt.ylabel('Flux')
+    plt.legend()
+    plt.savefig(plotbase+'_calflux.png',bbox_inches='tight')
     matplotlib.use('MacOSX')
 
    
@@ -704,7 +1225,9 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     slsp.offset = offset
     slsp.tcoef = sltcoef
     slsp.tsigcoef = sltsigcoef
-    
+
+    if ratehdu is None:
+        return slsp,None
 
     
     # Extract the RATE IMAGE with background subtraction
@@ -864,6 +1387,7 @@ def extract_slit(input_model,slit,ratehdu,bratehdu=None,verbose=False,plotbase='
     plt.plot(boxflux,label='Boxcar',linestyle='dashed')
     plt.xlabel('X')
     plt.ylabel('Flux')
+    plt.ylim(-medflux/3.,1.8*medflux)    
     plt.legend()
     plt.savefig(plotbase+'_rateflux.png',bbox_inches='tight')
     matplotlib.use('MacOSX')

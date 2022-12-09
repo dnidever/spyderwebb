@@ -18,6 +18,7 @@ def qa(obsid):
     lines += ['<head>']
     lines += ['<title>Observation '+obsid]
     lines += ['</title>']
+    lines += ['<base target="_blank">']
     lines += ['</head>']
     lines += ['<body>']        
 
@@ -39,55 +40,65 @@ def qa(obsid):
     expnames = expnames.replace('_rate.fits','')
     expnames = np.unique(expnames)
     nexp = len(expnames)
-    
+    lines += ['<h4>'+str(nexp)+' exposures: ']
+    lines += ['<ul>']
+    for i in range(nexp):
+        lines += ['<li>'+expnames[i]]
+    lines += ['</ul></h4>']
+        
     calstackfiles = glob(obsid+'/stack/spStack-*_cal.fits*')
     starids = [os.path.basename(c)[8:-9] for c in calstackfiles if os.path.getsize(c)>0]
     nstars = len(starids)
+
+    lines += ['<h3>Click on an image to see a larger version</h3><p>']
     
     lines += ['<table border=1>']
-    header = '<tr><th>Number</th><th>Name</th><th>Image Type</th>'
+    header = '<tr bgcolor=#AEB6BF><th>Number</th><th>Name</th><th>Image Type</th>'
+    colors = ['#85C1E9','#F5B041','#BB8FCE','#27AE60','#EC7063','#008080']   # blue,orange,purple,green,red,teal
     for e in range(nexp):
         exp = expnames[e]
-        header += '<th>'+exp+' NRS1 Image</th><th>'+exp+' NRS2 Image</th>'
-        header += '<th>'+exp+' NRS1 PSF</th><th>'+exp+' NRS2 PSF</th>'
-        header += '<th>'+exp+' NRS1 Flux</th><th>'+exp+' NRS2 Flux</th>'
-    header += '<td>Combined Flux</th>'
+        color = colors[e]
+        header += '<th colspan=2 bgcolor='+color+'>Exposure '+str(e+1)+' Image</th>'
+        header += '<th colspan=2 bgcolor='+color+'>Exposure '+str(e+1)+' PSF</th>'
+        header += '<th colspan=2 bgcolor='+color+'>Exposure '+str(e+1)+' Flux</th>'        
+    header += '<td align=center>Combined Flux</th>'
     lines += [header]
-
+    lines += ['<tr bgcolor=#AEB6BF><td></td><td></td><td></td>'+3*nexp*'<td align=center>NRS1</td><td align=center>NRS2</td>'+'<td></td></tr>']
+    
     # A separate row for each star
     for i in range(nstars):
         starid = starids[i]
         lines += ['<tr>']
-        lines += ['<td rowspan=2>'+str(i+1)+'</td>']
-        lines += ['<td rowspan=2>'+starid+'</td>']
-        lines += ['<td>Cal</td>']
+        lines += ['<td rowspan=2 align=center>'+str(i+1)+'</td>']
+        lines += ['<td rowspan=2 align=center>'+starid+'</td>']
+        lines += ['<td align=center>Cal</td>']
         # Cal plots
         for e in range(nexp):
             exp = expnames[e]
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_slitdata.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_slitdata.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_slitdata.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_slitdata.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_slitopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_slitopsf.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_slitopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_slitopsf.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_slitflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_slitflux.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_slitflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_slitflux.png" height=400></a></td>']                        
-        lines += ['<td><img src="../stack/plots/spStack-'+starid+'_cal_flux.png" height=400></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_caldata.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_caldata.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_caldata.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_caldata.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_calopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_calopsf.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_calopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_calopsf.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_calflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_calflux.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_calflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_calflux.png" height=200></a></td>']
+        lines += ['<td><a href="../stack/plots/spStack-'+starid+'_cal_flux.png"><img src="../stack/plots/spStack-'+starid+'_cal_flux.png" height=200></a></td>']
         #lines += ['<td><img src="../stack/plots/spStack-'+starid+'_rate_flux.png"></td>']        
-        lines += ['<\tr>']
+        lines += ['</tr>']
         
         # Rate plots
         lines += ['<tr>']
-        lines += ['<td>Rate</td>']
+        lines += ['<td align=center>Rate</td>']
         for e in range(nexp):
             exp = expnames[e]
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_ratedata.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_ratedata.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_ratedata.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_ratedata.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_rateopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_rateopsf.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_rateopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_rateopsf.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_rateflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_rateflux.png" height=400></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_rateflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_rateflux.png" height=400></a></td>']            
-        lines += ['<td><img src="../stack/plots/spStack-'+starid+'_rate_flux.png" height=400></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_ratedata.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_ratedata.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_ratedata.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_ratedata.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_rateopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_rateopsf.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_rateopsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_rateopsf.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_rateflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_rateflux.png" height=200></a></td>']
+            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_rateflux.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_rateflux.png" height=200></a></td>']            
+        lines += ['<td><a href="../stack/plots/spStack-'+starid+'_rate_flux.png"><img src="../stack/plots/spStack-'+starid+'_rate_flux.png" height=200></a></td>']
         #lines += ['<td><img src="../stack/plots/spStack-'+starid+'_rate_flux.png"></td>']        
-        lines += ['<\tr>']
+        lines += ['</tr>']
         
         # a row for Cal and another one for Rate
     

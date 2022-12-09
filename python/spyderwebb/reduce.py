@@ -4,9 +4,13 @@ import os
 import numpy as np
 from astropy.table import Table
 from dlnpyutils import utils as dln,robust
+import tempfile
+import shutil
 
 # Astropy tools:
 from astropy.io import fits
+
+import jwst
 
 # JWST data models
 from jwst import datamodels
@@ -44,6 +48,7 @@ from . import extract, utils, sincint
 import matplotlib
 import matplotlib.pyplot as plt
 from dlnpyutils import plotting as pl
+
 
 def getexpinfo(obsname,logger=None):
 
@@ -275,6 +280,137 @@ def stackspec(splist):
 
     return comb,stack
 
+def process(fileinput,outdir='./',clobber=False):
+    """ Process multiple rate files using JWST calwebb_spec2 pipeline."""
+    files = glob(fileinput)
+    nfiles = len(files)
+    print(nfiles,' files found for ',fileinput)
+    if nfiles==0:
+        return
+    for f in files: print(f)
+    
+    # File loop
+    for i in range(nfiles):
+        filename = files[i]
+        print(' ')
+        print('------------------------------------------------------------')        
+        print(i+1,filename)
+        print('------------------------------------------------------------')
+        print(' ')
+        # Check that it's a dispersed exposures
+        hdu = fits.open(filename)
+        filt = hdu[0].header['filter']
+        grating = hdu[0].header['grating']
+        hdu.close()
+        if grating=='MIRROR':
+            print('NOT a dispersed image')
+            continue
+        res = process_exp(filename,outdir=outdir,clobber=clobber)
+    
+    
+
+def process_exp(filename,outdir='./',clobber=False):
+    """ Process exposure image through the JWST calwebb_spec2 pipeline."""
+    # filename should be a rate filename
+    
+    # Do NOT perform image-to-image background subtraction
+    # Extend the slits to be at least 3 shutters long
+
+    if os.path.exists(filename)==False:
+        raise ValueError(filename+' NOT FOUND')
+    if filename.endswith('_rate.fits')==False:
+        raise ValueError('Must be rate file')
+
+    odir = os.path.abspath(outdir)
+    if os.path.exists(odir)==False:
+        os.makedirs(odir)
+    
+    filebase = os.path.basename(filename)[:-10]  # remove _rate.fits
+    print('Processing ',filename)
+
+    outfile = odir+'/'+filebase+'_red.fits'
+    if os.path.exists(outfile) and clobber==False:
+        print(outfile+' exists already and clobber==False')
+        return None
+    
+    # Do the processing in a temporary directory
+    tempdir = tempfile.mkdtemp(prefix='msaproc',dir='./')
+    tempdir = os.path.abspath(tempdir)
+    
+    # Make symlink to the rate file
+    oldfilename = os.path.abspath(filename)
+    newfilename = tempdir+'/'+os.path.basename(filename)
+    os.symlink(oldfilename,newfilename)
+    
+    # Get some metadata
+    hdu = fits.open(filename)
+    msa_filename = hdu[0].header['MSAMETFL']
+    msa_metadata_id = hdu[0].header['MSAMETID']
+    dither_position = hdu[0].header['PATT_NUM']
+    hdu.close()
+    if os.path.exists(msa_filename)==False:
+        msa_filename = os.path.dirname(oldfilename)+'/'+msa_filename
+    if os.path.exists(msa_filename)==False:
+        raise ValueError(msa_filename+' NOT FOUND')    
+
+    # Expand MSA slits
+    msahdu = fits.open(msa_filename)
+    tab = Table(msahdu[2].data)
+    newtab = utils.expand_msa_slits(tab,msa_metadata_id=msa_metadata_id,dither_position=dither_position)
+        
+    # Move to temporary directory
+    curdir = os.path.abspath(os.curdir)
+    os.chdir(tempdir)
+
+    # Write the MSA file in the temporary directory
+    newhdu = fits.HDUList()
+    newhdu.append(msahdu[0])
+    newhdu.append(msahdu[1])
+    newhdu.append(fits.table_to_hdu(newtab))
+    newhdu[2].header['EXTNAME'] = 'SHUTTER_INFO'
+    newhdu.append(msahdu[3])
+    newmsa_filename = tempdir+'/'+os.path.basename(msa_filename)
+    newhdu.writeto(newmsa_filename,overwrite=True)
+    newhdu.close()
+    
+    # Create an instance of the pipeline class
+    spec2 = Spec2Pipeline()
+    # Set some parameters that pertain to the entire pipeline
+    spec2.save_results = False    
+    #spec2.assign_wcs.skip = True
+    spec2.bkg_subtract.skip = True
+    #spec2.imprint_subtract.skip = True
+    #spec2.msa_flagging.skip = True
+    #spec2.extract_2d.skip = True
+    #spec2.srctype.skip = True
+    #spec2.master_background_mos.skip = True
+    #spec2.wavecorr.skip = True
+    #spec2.flat_field.skip = True
+    #spec2.pathloss.skip = True
+    #spec2.barshadow.skip = True
+    #spec2.photom.skip = True
+    spec2.resample_spec.skip = True
+    spec2.extract_1d.skip = True
+
+    rate_file = os.path.basename(newfilename)
+    result = spec2.run(rate_file)
+    if type(result)==list:
+        result = result[0]
+        
+    # Move the modified MSA file to the output directory
+    newmsafile = odir+'/'+filebase+'_msa.fits'
+    print('Saving modified MSA file to ',newmsafile)
+    shutil.move(msa_filename,newmsafile)    
+    # Save results to output directory
+    print('Saving results to ',outfile)
+    result.save(outfile)
+    
+    # Delete the temporary directory
+    os.chdir(curdir)
+    shutil.rmtree(tempdir)
+
+    return result
+
 
 def reduce(obsname,outdir='./',logger=None,clobber=False):
     """ This reduces the JWST NIRSpec MSA data """
@@ -383,10 +519,19 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             matplotlib.use('Agg')
             fig = plt.figure(figsize=(12,7))
             plt.clf()
+            medflux = np.nanmedian(combslsp.flux)
             plt.plot(combslsp.wave,combslsp.flux)
             plt.xlabel('X')
             plt.ylabel('Flux')
+            plt.ylim(-medflux/3.,1.8*medflux)
             plt.savefig(stackplotdir+'/spStack-'+srcname+'_cal_flux.png',bbox_inches='tight')
+            plt.clf()
+            medflux = np.nanmedian(combsp.flux)            
+            plt.plot(combsp.wave,combsp.flux)
+            plt.xlabel('X')
+            plt.ylabel('Flux')
+            plt.ylim(-medflux/3.,1.8*medflux)            
+            plt.savefig(stackplotdir+'/spStack-'+srcname+'_rate_flux.png',bbox_inches='tight')
             matplotlib.use('MacOSX')
             
     print('Done')
@@ -411,7 +556,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
             raise ValueError(f+' NOT FOUND')
     if backexpname is not None:
         bratefilename1 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'
-        bratefilename2 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'        
+        bratefilename2 = backexpname+'_nrs2/'+backexpname+'_nrs2_rate.fits'
         if os.path.exists(bratefilename1)==False:
             raise ValueError(bratefilename1+' NOT FOUND')
         if os.path.exists(bratefilename2)==False:
@@ -462,7 +607,9 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
                 print(outfile+' is an empty file.')
                 continue
             print(outfile+' already exists. Loading')            
-            sp = doppler.read(outfile)
+            slsp = doppler.read(outfile)
+            slspeclist.append(slsp)
+            sp = doppler.read(outfile.replace('_cal.fits','_rate.fits'))
             speclist.append(sp)
             continue
 
@@ -481,6 +628,9 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
                 brate1 = fits.open(bratefilename1)
             if brate2 is None:
                 brate2 = fits.open(bratefilename2)                
+
+        import pdb; pdb.set_trace()
+
                 
         # NRS1
         slsp1,sp1 = None,None

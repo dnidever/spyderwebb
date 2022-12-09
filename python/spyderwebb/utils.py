@@ -148,3 +148,66 @@ def pix2wave(pix,wave0):
     out[pix < 0] = np.nan
     out[pix > 2047] = np.nan
     return out
+
+
+def expand_msa_slits(tab,msa_metadata_id=1,dither_position=1):
+    """ Modify the msa shutter table to expand the slits."""
+
+    # A lot of this code was taken from assign_wcs.nirspec.get_open_msa_slits()
+    
+    # First we are going to filter the msa_file data on the msa_metadata_id                                                                                      
+    # and dither_point_index.                                                                                                                                    
+    msa_data = [np.array(x) for x in tab if x['msa_metadata_id'] == msa_metadata_id
+                and x['dither_point_index'] == dither_position]
+
+    # Get all source_ids for slitlets with sources.                                                                                                              
+    # These should not be used when assigning source_id to background slitlets.                                                                                  
+    source_ids = set([x[5] for x in tab if x['msa_metadata_id'] == msa_metadata_id
+                      and x['dither_point_index'] == dither_position])
+    #print(len(source_ids),'sources')
+
+    
+    # Get the unique slitlet_ids  
+    slitlet_ids_unique = list(set([int(x['slitlet_id']) for x in msa_data]))
+
+    # SDP may assign a value of "-1" to ``slitlet_id`` - these need to be ignored.                                                                               
+    # JP-436                                                                                                                                                     
+    if -1 in slitlet_ids_unique:
+        slitlet_ids_unique.remove(-1)
+
+    newtab = tab.copy()
+        
+    # Loop over the source_ids
+    # Now lets look at each unique slitlet id                                                                                                                    
+    for i,slitlet_id in enumerate(slitlet_ids_unique):
+        # Get the rows for the current slitlet_id                                                                                                                
+        slitlets_sid = [x for x in msa_data if x['slitlet_id'] == slitlet_id]
+        open_shutters = [int(x['shutter_column']) for x in slitlets_sid]
+
+        main_shutter = [s for s in slitlets_sid if s['primary_source'] == 'Y']
+        n_main_shutter = len([s for s in slitlets_sid if s['primary_source'] == 'Y'])
+
+        xcen, ycen, quadrant, source_xpos, source_ypos = [
+                (int(s['shutter_row']), int(s['shutter_column']), int(s['shutter_quadrant']),
+                 float(s['estimated_source_in_shutter_x']),
+                 float(s['estimated_source_in_shutter_y']))
+                for s in slitlets_sid if s['background'] == 'N'][0]
+        source_id = int(main_shutter[0]['source_id'])
+        
+        #print(i+1,xcen,ycen,n_main_shutter,open_shutters)
+
+        # Need three total
+        if len(open_shutters):
+            #needcols = [ycen-1,ycen,ycen+1]
+            needcols = [ycen-2,ycen-1,ycen,ycen+1,ycen+2]
+            needcols = [x for x in needcols if x not in open_shutters]
+            # Loop over needed shutters
+            for x in needcols:
+                # slitlet_id, msa_metadata_id, quadrant, shutter_row, shutter_column, source_id, background, shutter_state,
+                #   estimated_source_in_shutter_x, estimated_source_in_shutter_y, dither_point_index, primary_source
+                newrow = np.array((slitlet_id, msa_metadata_id, quadrant, xcen, x, source_id, 'Y', 'OPEN', np.nan, np.nan, dither_position, 'N'))
+                newtab.add_row(newrow)
+
+    # NOTE, this does NOT check to see if there any "conflicts" of the newly added shutters with any existing shutters 
+                
+    return newtab
