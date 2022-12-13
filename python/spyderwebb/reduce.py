@@ -6,6 +6,7 @@ from astropy.table import Table
 from dlnpyutils import utils as dln,robust
 import tempfile
 import shutil
+import traceback
 
 # Astropy tools:
 from astropy.io import fits
@@ -43,36 +44,43 @@ from scipy.ndimage.filters import median_filter, gaussian_filter
 from glob import glob
 import doppler
 from doppler.spec1d import Spec1D
-from . import extract, utils, sincint
+from . import extract, utils, sincint, qa
 
 import matplotlib
 import matplotlib.pyplot as plt
 from dlnpyutils import plotting as pl
 
 
-def getexpinfo(obsname,logger=None):
+def getexpinfo(obsname,logger=None,redtag='red'):
 
     #if logger is None: logger=dln.basiclogger()
     
     print('Looking for data for obsname='+obsname)
-    dirs = glob(obsname+'*')
-    # Only want directories
-    dirs = [d for d in dirs if os.path.isdir(d)]
-    dirs = [d for d in dirs if (d.endswith('_nrs1') or d.endswith('_nrs2'))]
-    if len(dirs)==0:
-        raise ValueError('No directories found for '+obsname)
+    files = glob(obsname+'*'+redtag+'*')
+    nfiles = len(files)
+    if len(files)==0:
+        raise ValueError('No files found for '+obsname)    
+    #dirs = glob(obsname+'*')
+    ## Only want directories
+    #dirs = [d for d in dirs if os.path.isdir(d)]
+    #dirs = [d for d in dirs if (d.endswith('_nrs1') or d.endswith('_nrs2'))]
+    #if len(dirs)==0:
+    #    raise ValueError('No directories found for '+obsname)
     
     # Get exposures names
-    base = [d[:-5] for d in dirs]
+    #base = [d[:-5] for d in dirs]
+    base = [os.path.basename(f) for f in files]
+    base = [b[:b.find('_nrs')] for b in base]
     expnames = np.unique(base)
     nexp = len(expnames)
     print('Found '+str(nexp)+' exposures')
     
-    # Check the _cal.fits files and get basic information
+    # Check the _red.fits files and get basic information
     edict = []
     for i in range(nexp):
         expname = expnames[i]
-        calfile = expname+'_nrs1/'+expname+'_nrs1_cal.fits'
+        #calfile = expname+'_nrs1/'+expname+'_nrs1_cal.fits'
+        calfile = expname+'_nrs1_'+redtag+'.fits'
         if os.path.exists(calfile)==False:
             print(calfile+' NOT FOUND')
             continue
@@ -117,9 +125,19 @@ def joinspec(sp1,sp2):
     mask[0:sp2.npix,1] = sp2.mask
     wave = np.zeros((npix,2),float)
     wave[0:sp1.npix,0] = sp1.wave
-    wave[0:sp2.npix,1] = sp2.wave        
+    wave[0:sp2.npix,1] = sp2.wave
+    # Combine the LSF parameters
+    # x-type is wavelengths
+    nlpars = np.max((len(sp1.lsf.pars[:,0]),len(sp2.lsf.pars[:,0])))
+    lsfpars = np.zeros((nlpars,2),float)
+    lsfpars[0:len(sp1.lsf.pars[:,0]),0] = sp1.lsf.pars[:,0]
+    lsfpars[0:len(sp2.lsf.pars[:,0]),1] = sp2.lsf.pars[:,0]
+    #lsfpars = np.hstack((sp1.lsf.pars,sp2.lsf.pars))
+    lsftype = sp1.lsf.lsftype
+    lsfxtype = sp1.lsf.xtype
     # Put it all together
-    sp = Spec1D(flux,err=err,wave=wave,mask=mask,instrument='NIRSpec')
+    sp = Spec1D(flux,err=err,wave=wave,mask=mask,instrument='NIRSpec',
+                lsfpars=lsfpars,lsftype=lsftype,lsfxtype=lsfxtype)
     sp.source_name = sp1.source_name
     sp.source_id = sp1.source_id
     sp.slitlet_id = sp1.slitlet_id
@@ -170,6 +188,7 @@ def stackspec(splist):
     stack.wave = fwave
     stack.mask = np.ones([nspec,nfpix],bool)
     stack.cont = zeros.copy()
+    lsfwsigma = np.zeros([nspec,nfpix],bool)+np.nan
     
         #gdwave, = np.where(fwave > 0)
         #fwave = fwave[gdwave]
@@ -189,6 +208,7 @@ def stackspec(splist):
                 flux = spec.flux[gdpix,o]
                 err = spec.err[gdpix,o]
                 mask = spec.mask[gdpix,o]
+                lsfpars = spec.lsf.pars[:,o]
             else:
                 gdpix, = np.where(spec.wave > 0)
                 ngdpix = len(gdpix)
@@ -196,6 +216,7 @@ def stackspec(splist):
                 flux = spec.flux[gdpix]
                 err = spec.err[gdpix]
                 mask = spec.mask[gdpix]
+                lsfpars = spec.lsf.pars[:,o]                
 
             # Mask Nan/Inf pixels
             bdpix, = np.where((~np.isfinite(flux)) | (~np.isfinite(err)))
@@ -263,13 +284,27 @@ def stackspec(splist):
             badpix, = np.where(stack.mask[i,:])
             if len(badpix)>0:
                 stack.err[i,badpix] = 1e30
+
+            # LSF sigma
+            if spec.lsf.xtype.lower()=='wave':
+                lwsig = np.polyval(lsfpars[::-1],fwave[gd])
+            else:
+                import pdb; pdb.set_trace()
+            lsfwsigma[i,gd] = lwsig
+
+    # Combine LSF, take average of the LSF wavelength sigma
+    mnlsfwsigma = np.nanmean(lsfwsigma,axis=0)
+    # polynomial fit to the values versus wavelength
+    gdw, = np.where(np.isfinite(mnlsfwsigma))
+    lsfcoef = np.polyfit(fwave[gdw],mnlsfwsigma[gdw],2)
                 
     # Create final spectrum
     zeros = np.zeros(splist[0].flux.shape)
     izeros = np.zeros(splist[0].flux.shape,bool)
-    comb = Spec1D(zeros,err=zeros.copy(),mask=np.ones(splist[0].flux.shape,bool),wave=stack.wave.copy())
+    comb = Spec1D(zeros,err=zeros.copy(),mask=np.ones(splist[0].flux.shape,bool),wave=stack.wave.copy(),
+                  instrument='NIRSpec',lsfpars=lsfcoef[::-1],lsftype=spec.lsf.lsftype,lsfxtype=spec.lsf.xtype)
     comb.cont = zeros.copy()
-    
+
     # Pixel-by-pixel weighted average
     cont = np.mean(stack.cont,axis=0)
     comb.flux = np.sum(stack.flux/stack.err**2,axis=0)/np.sum(1./stack.err**2,axis=0) * cont
@@ -314,7 +349,7 @@ def process_exp(filename,outdir='./',clobber=False):
     # filename should be a rate filename
     
     # Do NOT perform image-to-image background subtraction
-    # Extend the slits to be at least 3 shutters long
+    # Extend the slits to be at least 5 shutters long
 
     if os.path.exists(filename)==False:
         raise ValueError(filename+' NOT FOUND')
@@ -372,6 +407,7 @@ def process_exp(filename,outdir='./',clobber=False):
     newmsa_filename = tempdir+'/'+os.path.basename(msa_filename)
     newhdu.writeto(newmsa_filename,overwrite=True)
     newhdu.close()
+    msahdu.close()
     
     # Create an instance of the pipeline class
     spec2 = Spec2Pipeline()
@@ -398,9 +434,9 @@ def process_exp(filename,outdir='./',clobber=False):
         result = result[0]
         
     # Move the modified MSA file to the output directory
-    newmsafile = odir+'/'+filebase+'_msa.fits'
-    print('Saving modified MSA file to ',newmsafile)
-    shutil.move(msa_filename,newmsafile)    
+    outmsafile = odir+'/'+filebase+'_'+msa_filename[-11:]  # keep the msa number at the end
+    print('Saving modified MSA file to ',outmsafile)
+    shutil.move(newmsa_filename,outmsafile)    
     # Save results to output directory
     print('Saving results to ',outfile)
     result.save(outfile)
@@ -412,14 +448,14 @@ def process_exp(filename,outdir='./',clobber=False):
     return result
 
 
-def reduce(obsname,outdir='./',logger=None,clobber=False):
-    """ This reduces the JWST NIRSpec MSA data """
+def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=False):
+    """ This extracts spectra from the JWST NIRSpec MSA data """
 
     if outdir.endswith('/')==False: outdir+='/'
     #if logger is None: logger=dln.basiclogger()
     
     # Get exposures information
-    edict = getexpinfo(obsname)
+    edict = getexpinfo(obsname,redtag=redtag)
     nexp = len(edict)
     if nexp==0:
         print('No exposures to reduce')
@@ -464,17 +500,21 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             print('------------------------------------')            
             print('EXPOSURE '+str(i+1)+' '+expname)
             print('------------------------------------')
-            if nexp>1:
+            if nexp>1 and noback==False:
                 if i==0:
                     backexpname = expnames[1]
                 else:
                     backexpname = expnames[0]
-            slspeclist,speclist = extractexp(expname,backexpname,outdir=odir,clobber=clobber)
+            else:
+                backexpname = None
+            speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,clobber=clobber)
             srcname = [s.source_name for s in speclist]
-            slexpspec.append(slspeclist)
+            #slexpspec.append(slspeclist)
             expspec.append(speclist)            
             sourcenames += srcname
 
+        #import pdb; pdb.set_trace()
+            
         # Loop over sources
         print('Combining spectra')
         sourcenames = np.unique(np.array(sourcenames))
@@ -486,81 +526,97 @@ def reduce(obsname,outdir='./',logger=None,clobber=False):
             # Stack spectra from multiple exposures
             if nexp>1:
                 # Loop over exposures
-                slsplist = []
+                #slsplist = []
                 splist = []                
                 for e in range(nexp):
-                    eslspeclist = slexpspec[e]  # list of all spectra from this exposures
+                    #eslspeclist = slexpspec[e]  # list of all spectra from this exposures
                     especlist = expspec[e]  # list of all spectra from this exposures                    
                     esourcename = np.array([s.source_name for s in especlist])
                     ind, = np.where(esourcename==srcname)
                     if len(ind)>0:
-                        slsplist.append(eslspeclist[ind[0]])
+                        #slsplist.append(eslspeclist[ind[0]])
                         splist.append(especlist[ind[0]])                        
                         
                 # Do the stacking
                 if len(splist)>1:
                     print('Combining spectra from multiple exposures')
-                    combslsp,slstack = stackspec(slsplist)
+                    #combslsp,slstack = stackspec(slsplist)
                     combsp,stack = stackspec(splist)                    
                 else:
-                    combslsp = slsplist[0]
+                    #combslsp = slsplist[0]
                     combsp = splist[0]                    
             else:
-                combslsp = slsplist[0]
+                #combslsp = slsplist[0]
                 combsp = splist[0]                
                 
             # Write to file
-            outfile = stackdir+'/spStack-'+srcname+'_cal.fits'
+            outfile = stackdir+'/spStack-'+srcname+'_'+redtag+'.fits'
             print('Writing to '+outfile)
-            combslsp.write(outfile,overwrite=True)
-            combsp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
+            combsp.write(outfile,overwrite=True)
+            #combslsp.write(outfile,overwrite=True)            
+            #combsp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
 
             # Save a plot
             matplotlib.use('Agg')
             fig = plt.figure(figsize=(12,7))
             plt.clf()
-            medflux = np.nanmedian(combslsp.flux)
-            plt.plot(combslsp.wave,combslsp.flux)
-            plt.xlabel('X')
-            plt.ylabel('Flux')
-            plt.ylim(-medflux/3.,1.8*medflux)
-            plt.savefig(stackplotdir+'/spStack-'+srcname+'_cal_flux.png',bbox_inches='tight')
-            plt.clf()
-            medflux = np.nanmedian(combsp.flux)            
+            medflux = np.nanmedian(combsp.flux)
             plt.plot(combsp.wave,combsp.flux)
             plt.xlabel('X')
             plt.ylabel('Flux')
-            plt.ylim(-medflux/3.,1.8*medflux)            
-            plt.savefig(stackplotdir+'/spStack-'+srcname+'_rate_flux.png',bbox_inches='tight')
+            plt.ylim(-medflux/3.,1.8*medflux)
+            plt.savefig(stackplotdir+'/spStack-'+srcname+'_'+redtag+'_flux.png',bbox_inches='tight')
+            plt.clf()
+            #medflux = np.nanmedian(combsp.flux)            
+            #plt.plot(combsp.wave,combsp.flux)
+            #plt.xlabel('X')
+            #plt.ylabel('Flux')
+            #plt.ylim(-medflux/3.,1.8*medflux)            
+            #plt.savefig(stackplotdir+'/spStack-'+srcname+'_rate_flux.png',bbox_inches='tight')
             matplotlib.use('MacOSX')
+
+
+        # Run qa
+        qa.qa(obsid)
             
     print('Done')
 
 
 
-def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
+def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,redtag='red'):
     """ This performs 1D-extraction of the spectra in one exposure."""
 
     #if logger is None: logger=dln.basiclogger()
     plotdir = outdir+'/plots/'
     if os.path.exists(plotdir)==False:
         os.makedirs(plotdir)
-    
+        
     # Load the calibrated file    
-    calfilename1 = expname+'_nrs1/'+expname+'_nrs1_cal.fits'
-    ratefilename1 = expname+'_nrs1/'+expname+'_nrs1_rate.fits'    
-    calfilename2 = expname+'_nrs2/'+expname+'_nrs2_cal.fits'
-    ratefilename2 = expname+'_nrs2/'+expname+'_nrs2_rate.fits'
-    for f in [calfilename1,ratefilename1,calfilename1,ratefilename1]:
+    calfilename1 = expname+'_nrs1_'+redtag+'.fits'
+    calfilename2 = expname+'_nrs2_'+redtag+'.fits'
+    origcalfilename1 = expname+'_nrs1_cal.fits'
+    origcalfilename2 = expname+'_nrs2_cal.fits'    
+    #calfilename1 = expname+'_nrs1/'+expname+'_nrs1_'+redtag+'.fits'    
+    #ratefilename1 = expname+'_nrs1/'+expname+'_nrs1_rate.fits'    
+    #calfilename2 = expname+'_nrs2/'+expname+'_nrs2_'+redtag+'.fits'
+    #ratefilename2 = expname+'_nrs2/'+expname+'_nrs2_rate.fits'
+    #for f in [calfilename1,ratefilename1,calfilename1,ratefilename1]:
+    for f in [calfilename1,calfilename1]:        
         if os.path.exists(f)==False:
             raise ValueError(f+' NOT FOUND')
     if backexpname is not None:
-        bratefilename1 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'
-        bratefilename2 = backexpname+'_nrs2/'+backexpname+'_nrs2_rate.fits'
-        if os.path.exists(bratefilename1)==False:
-            raise ValueError(bratefilename1+' NOT FOUND')
-        if os.path.exists(bratefilename2)==False:
-            raise ValueError(bratefilename2+' NOT FOUND')        
+        #bratefilename1 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'
+        #bratefilename2 = backexpname+'_nrs2/'+backexpname+'_nrs2_rate.fits'
+        #if os.path.exists(bratefilename1)==False:
+        #    raise ValueError(bratefilename1+' NOT FOUND')
+        #if os.path.exists(bratefilename2)==False:
+        #    raise ValueError(bratefilename2+' NOT FOUND')        
+        bcalfilename1 = backexpname+'_nrs1_'+redtag+'.fits'
+        bcalfilename2 = backexpname+'_nrs2_'+redtag+'.fits'        
+        if os.path.exists(bcalfilename1)==False:
+            raise ValueError(bcalfilename1+' NOT FOUND')
+        if os.path.exists(bcalfilename2)==False:
+            raise ValueError(bcalfilename2+' NOT FOUND')        
         
     hdu1 = fits.open(calfilename1)
     nsources1 = int(len(hdu1)-2/8)
@@ -588,9 +644,34 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
     sourcenames = allsourcenames[ui]
     nsources = len(sourceids)
     print(str(nsources)+' sources')
+
+    # Get sourceids for the background exposures
+    if backexpname is not None:
+        bhdu1 = fits.open(bcalfilename1)
+        nbsources1 = int(len(bhdu1)-2/8)
+        bsourceid1 = []
+        bsourcename1 = []    
+        for i in np.arange(1,len(bhdu1)):
+            if bhdu1[i].header.get('extname')=='SCI':
+                bsourceid1.append(bhdu1[i].header['srcalias'])
+                bsourcename1.append(bhdu1[i].header['srcname']) 
+        bsourceid1 = np.array(bsourceid1)
+        bhdu1.close()
+        bhdu2 = fits.open(bcalfilename2)
+        bsourceid2 = []
+        bsourcename2 = []
+        for i in np.arange(1,len(bhdu2)):
+            if bhdu2[i].header.get('extname')=='SCI':
+                bsourceid2.append(bhdu2[i].header['srcalias'])
+                bsourcename2.append(bhdu2[i].header['srcname'])
+        bsourceid2 = np.array(bsourceid2)
+        bhdu2.close()
+
     
     # Looping over sources
     data1,data2,rate1,rate2,brate1,brate2 = None,None,None,None,None,None
+    ocalhdu1,ocalhdu2 = None,None
+    backdata1,backdata2 = None,None
     slspeclist = []
     speclist = []    
     for i in range(nsources):
@@ -601,15 +682,16 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
         print('--',i+1,sourceid,'--')
         
         # Check if it already exists
-        outfile = outdir+'spVisit-'+sourcename+'_'+expname+'_cal.fits'
+        outfile = outdir+'spVisit-'+sourcename+'_'+expname+'_'+redtag+'.fits'
         if os.path.exists(outfile) and clobber==False:
             if os.path.getsize(outfile)==0:
                 print(outfile+' is an empty file.')
                 continue
             print(outfile+' already exists. Loading')            
-            slsp = doppler.read(outfile)
-            slspeclist.append(slsp)
-            sp = doppler.read(outfile.replace('_cal.fits','_rate.fits'))
+            #slsp = doppler.read(outfile)
+            #slspeclist.append(slsp)
+            #sp = doppler.read(outfile.replace('_cal.fits','_rate.fits'))
+            sp = doppler.read(outfile)
             speclist.append(sp)
             continue
 
@@ -619,50 +701,76 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
         if data2 is None:
             print('Loading '+calfilename2)    
             data2 = datamodels.open(calfilename2)
-        if rate1 is None:
-            rate1 = fits.open(ratefilename1)
-        if rate2 is None:
-            rate2 = fits.open(ratefilename2)            
+        #if ocalhdu1 is None:
+        #    ocalhdu1 = fits.open(origcalfilename1)
+        #if ocalhdu2 is None:
+        #    ocalhdu1 = fits.open(origcalfilename2)            
+        #if rate1 is None:
+        #    rate1 = fits.open(ratefilename1)
+        #if rate2 is None:
+        #    rate2 = fits.open(ratefilename2)            
         if backexpname is not None:
-            if brate1 is None:
-                brate1 = fits.open(bratefilename1)
-            if brate2 is None:
-                brate2 = fits.open(bratefilename2)                
-
-        import pdb; pdb.set_trace()
-
+            #if brate1 is None:
+            #    brate1 = fits.open(bratefilename1)
+            #if brate2 is None:
+            #    brate2 = fits.open(bratefilename2)
+            if backdata1 is None:
+                print('Loading '+bcalfilename1)
+                backdata1 = datamodels.open(bcalfilename1)
+            if backdata2 is None:
+                print('Loading '+bcalfilename2)                
+                backdata2 = datamodels.open(bcalfilename2)            
                 
         # NRS1
-        slsp1,sp1 = None,None
+        slsp1,sp1,backslit1,bind1 = None,None,None,[]
         ind1, = np.where(sourceid1==sourceid)
+        if backexpname is not None:
+            bind1, = np.where(bsourceid1==sourceid)
         if len(ind1)>0:
             plotbase = plotdir+sourcename+'_'+expname+'_nrs1'
-            slsp1,sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],rate1,brate1,plotbase=plotbase)
+            #slsp1,sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],rate1,brate1,plotbase=plotbase)
+            if len(bind1)>0:
+                backslit1 = backdata1.slits[bind1[0]]
+            #sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,ocalhdu1[ind1[0]*10+1],plotbase=plotbase)
+            try:
+                sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,plotbase=plotbase)
+            except:
+                traceback.print_exc()
         # NRS2
-        slsp2,sp2 = None,None
+        slsp2,sp2,backslit2,bind2 = None,None,None,[]
         ind2, = np.where(sourceid2==sourceid)
+        if backexpname is not None:
+            bind2, = np.where(bsourceid2==sourceid)        
         if len(ind2)>0:
             plotbase = plotdir+sourcename+'_'+expname+'_nrs2'
-            slsp2,sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],rate2,brate2,plotbase=plotbase)
-
+            #slsp2,sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],rate2,brate2,plotbase=plotbase)
+            if len(bind2)>0:
+                backslit2 = backdata2.slits[bind2[0]]
+            #sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,ocalhdu2[ind2[0]*10+1],plotbase=plotbase)
+            try:
+                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,plotbase=plotbase)                        
+            except:
+                traceback.print_exc()
+                
         # Join the two spectra together
         if sp1 is not None and sp2 is not None:
-            slsp = joinspec(slsp1,slsp2)
+            #slsp = joinspec(slsp1,slsp2)
             sp = joinspec(sp1,sp2)            
         else:
             if sp1 is not None:
-                slsp = slsp1
+                #slsp = slsp1
                 sp = sp1                
             if sp2 is not None:
-                slsp = slsp2
+                #slsp = slsp2
                 sp = sp2                
             
         # Save the file
         if sp is not None:
             print('Writing to '+outfile)
-            slsp.write(outfile,overwrite=True)
-            sp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
-            slspeclist.append(slsp)
+            sp.write(outfile,overwrite=True)
+            #slsp.write(outfile,overwrite=True)            
+            #sp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
+            #slspeclist.append(slsp)
             speclist.append(sp)            
         else:
             dln.touch(outfile)
@@ -670,9 +778,14 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False):
     # Close the files
     if data1 is not None: data1.close()
     if data2 is not None: data2.close()
-    if rate1 is not None: rate1.close()
-    if rate2 is not None: rate2.close()
-    if brate1 is not None: brate1.close()
-    if brate2 is not None: brate2.close()        
+    if ocalhdu1 is not None: ocalhdu1.close()
+    if ocalhdu2 is not None: ocalhdu2.close()    
+    if backdata1 is not None: backdata1.close()
+    if backdata2 is not None: backdata2.close()    
+    #if rate1 is not None: rate1.close()
+    #if rate2 is not None: rate2.close()
+    #if brate1 is not None: brate1.close()
+    #if brate2 is not None: brate2.close()        
     
-    return slspeclist,speclist
+    #return slspeclist,speclist
+    return speclist

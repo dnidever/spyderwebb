@@ -211,3 +211,12 @@ def expand_msa_slits(tab,msa_metadata_id=1,dither_position=1):
     # NOTE, this does NOT check to see if there any "conflicts" of the newly added shutters with any existing shutters 
                 
     return newtab
+
+def is_binaryfile(filename):
+    """ Check if a file is binary."""    
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            dum = f.read()
+            return False
+    except UnicodeDecodeError: # Found non-text data
+        return True  
