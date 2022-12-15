@@ -138,6 +138,9 @@ def joinspec(sp1,sp2):
     # Put it all together
     sp = Spec1D(flux,err=err,wave=wave,mask=mask,instrument='NIRSpec',
                 lsfpars=lsfpars,lsftype=lsftype,lsfxtype=lsfxtype)
+    sp.jd = sp1.jd
+    sp.exptime = sp1.exptime
+    sp.bc = sp1.bc
     sp.source_name = sp1.source_name
     sp.source_id = sp1.source_id
     sp.slitlet_id = sp1.slitlet_id
@@ -158,7 +161,7 @@ def joinspec(sp1,sp2):
     sp.yize2 = sp2.ysize
     sp.tcoef2 = sp2.tcoef
     sp.tsigcoef2 = sp2.tsigcoef
-
+    
     return sp
 
 def stackspec(splist):
@@ -188,6 +191,7 @@ def stackspec(splist):
     stack.wave = fwave
     stack.mask = np.ones([nspec,nfpix],bool)
     stack.cont = zeros.copy()
+    stack.bc = np.zeros(nspec,float)
     lsfwsigma = np.zeros([nspec,nfpix],bool)+np.nan
     
         #gdwave, = np.where(fwave > 0)
@@ -197,8 +201,15 @@ def stackspec(splist):
     for i in range(nspec):
         spec = splist[i]
 
+        # Barycentric correction
+        if spec.bc is None:
+            bc = spec.barycorr()
+        else:
+            bc = spec.bc
+        stack.bc[i] = bc
+        
         # Loop over the detectors/orders
-        for o in range(norder):
+        for o in range(spec.norder):
 
             # Get the good pixels
             if spec.ndim==2:
@@ -208,7 +219,7 @@ def stackspec(splist):
                 flux = spec.flux[gdpix,o]
                 err = spec.err[gdpix,o]
                 mask = spec.mask[gdpix,o]
-                lsfpars = spec.lsf.pars[:,o]
+                lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]
             else:
                 gdpix, = np.where(spec.wave > 0)
                 ngdpix = len(gdpix)
@@ -216,8 +227,8 @@ def stackspec(splist):
                 flux = spec.flux[gdpix]
                 err = spec.err[gdpix]
                 mask = spec.mask[gdpix]
-                lsfpars = spec.lsf.pars[:,o]                
-
+                lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]                
+                    
             # Mask Nan/Inf pixels
             bdpix, = np.where((~np.isfinite(flux)) | (~np.isfinite(err)))
             if len(bdpix)>0:
@@ -312,7 +323,7 @@ def stackspec(splist):
     comb.mask = np.bitwise_and.reduce(stack.mask,0)
     comb.err[comb.mask] = 1e30
     comb.cont = cont
-
+    
     return comb,stack
 
 def process(fileinput,outdir='./',clobber=False):
@@ -722,6 +733,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
                 backdata2 = datamodels.open(bcalfilename2)            
                 
         # NRS1
+        print('-NRS1-')
         slsp1,sp1,backslit1,bind1 = None,None,None,[]
         ind1, = np.where(sourceid1==sourceid)
         if backexpname is not None:
@@ -737,6 +749,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
             except:
                 traceback.print_exc()
         # NRS2
+        print('-NRS2-')        
         slsp2,sp2,backslit2,bind2 = None,None,None,[]
         ind2, = np.where(sourceid2==sourceid)
         if backexpname is not None:

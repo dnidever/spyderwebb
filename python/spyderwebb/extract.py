@@ -929,7 +929,10 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,plot
     sp = Spec1D(flux,err=fluxerr,wave=wav,mask=(fluxerr>1e20),instrument='NIRSpec',
                   lsfpars=wsigcoef[::-1],lsftype='Gaussian',lsfxtype='wave')
     sp.date = input_model.meta.date
-    sp.jd = Time(input_model.meta.date).jd
+    #sp.jd = Time(input_model.meta.date).jd
+    sp.jd = Time(slit.meta.time.barycentric_expmid,format='mjd').jd
+    sp.exptime = slit.meta.exposure.effective_exposure_time
+    sp.bc = slit.meta.wcsinfo.velosys/1e3   # BC in km/s
     sp.ytrace = ytrace
     sp.source_name = slit.source_name
     sp.source_id = slit.source_id
@@ -940,7 +943,7 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,plot
     sp.xsize = xsize
     sp.ystart = slit.ystart
     sp.ysize = slit.ysize
-    sp.offset = offset
+    sp.offset = yoffset
     sp.tcoef = tcoef
     sp.tsigcoef = tsigcoef
     
