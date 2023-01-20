@@ -126,6 +126,11 @@ def joinspec(sp1,sp2):
     wave = np.zeros((npix,2),float)
     wave[0:sp1.npix,0] = sp1.wave
     wave[0:sp2.npix,1] = sp2.wave
+    if hasattr(sp1,'fluxcorr'):
+        fluxcorr = np.ones((npix,2),float)
+        fluxcorr[0:sp1.npix,0] = sp1.fluxcorr
+        fluxcorr[0:sp2.npix,1] = sp2.fluxcorr
+ 
     # Combine the LSF parameters
     # x-type is wavelengths
     nlpars = np.max((len(sp1.lsf.pars[:,0]),len(sp2.lsf.pars[:,0])))
@@ -139,6 +144,8 @@ def joinspec(sp1,sp2):
     sp = Spec1D(flux,err=err,wave=wave,mask=mask,instrument='NIRSpec',
                 lsfpars=lsfpars,lsftype=lsftype,lsfxtype=lsfxtype)
     sp.jd = sp1.jd
+    if hasattr(sp1,'fluxcorr'):
+        sp.fluxcorr = fluxcorr
     sp.exptime = sp1.exptime
     sp.bc = sp1.bc
     sp.source_name = sp1.source_name
@@ -171,6 +178,11 @@ def stackspec(splist):
     npix = splist[0].npix
     norder = splist[0].norder
 
+
+    # Need to rescale NRS1
+    #  median is 1.096
+    rescale_nrs1 = 1.096
+    
     # The two detectors are about 147 pixels apart
 
     # Array of sinc widths
@@ -185,18 +197,16 @@ def stackspec(splist):
     # initialize array for stack of interpolated spectra
     zeros = np.zeros([nspec,nfpix])
     izeros = np.zeros([nspec,nfpix],bool)
-    stack = Spec1D(np.zeros(10),wave=np.zeros(10))
+    stack = Spec1D(np.ones(10),wave=np.arange(10))
     stack.flux = zeros
     stack.err = zeros.copy()+1e30
     stack.wave = fwave
     stack.mask = np.ones([nspec,nfpix],bool)
+    stack.fluxcorr = np.ones([nspec,nfpix])
     stack.cont = zeros.copy()
     stack.bc = np.zeros(nspec,float)
     lsfwsigma = np.zeros([nspec,nfpix],bool)+np.nan
-    
-        #gdwave, = np.where(fwave > 0)
-        #fwave = fwave[gdwave]
-        
+
     # Loop over each exposure and interpolate to final wavelength grid
     for i in range(nspec):
         spec = splist[i]
@@ -220,6 +230,7 @@ def stackspec(splist):
                 err = spec.err[gdpix,o]
                 mask = spec.mask[gdpix,o]
                 lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]
+                fluxcorr = spec.fluxcorr[gdpix,o]
             else:
                 gdpix, = np.where(spec.wave > 0)
                 ngdpix = len(gdpix)
@@ -228,7 +239,13 @@ def stackspec(splist):
                 err = spec.err[gdpix]
                 mask = spec.mask[gdpix]
                 lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]                
-                    
+                fluxcorr = spec.fluxcorr[gdpix]
+
+            # Rescale NRS1 to NRS2 levels
+            if spec.ndim==2 and o==0:
+                flux *= rescale_nrs1
+                err *= rescale_nrs1
+
             # Mask Nan/Inf pixels
             bdpix, = np.where((~np.isfinite(flux)) | (~np.isfinite(err)))
             if len(bdpix)>0:
@@ -274,7 +291,8 @@ def stackspec(splist):
             gd, = np.where((fwave >= np.min(wave)) & (fwave <= np.max(wave)))
             newflux = dln.interp(wave,flux,fwave[gd],kind='cubic',extrapolate=False)
             newerr = dln.interp(wave,err,fwave[gd],kind='cubic',extrapolate=False)
-            newmask = dln.interp(wave,mask.astype(float),fwave[gd],kind='cubic',extrapolate=False)            
+            newmask = dln.interp(wave,mask.astype(float),fwave[gd],kind='cubic',extrapolate=False)
+            newfluxcorr = dln.interp(wave,fluxcorr,fwave[gd],kind='cubic',extrapolate=False)                        
             #gd, = np.where(np.isfinite(newflux))
             
             # From output flux, get continuum to remove, so that all spectra are
@@ -286,6 +304,7 @@ def stackspec(splist):
             #stack.wave[0:len(fwave)] = fwave
             stack.flux[i,gd] = newflux / stack.cont[i,gd]
             stack.err[i,gd] = newerr / stack.cont[i,gd]
+            stack.fluxcorr[i,gd] = newfluxcorr
             # For mask, set bits where interpolated value is below some threshold to "good"
             goodmask, = np.where(newmask < 0.5)
             if len(goodmask)>0:
@@ -302,7 +321,7 @@ def stackspec(splist):
             else:
                 import pdb; pdb.set_trace()
             lsfwsigma[i,gd] = lwsig
-
+            
     # Combine LSF, take average of the LSF wavelength sigma
     mnlsfwsigma = np.nanmean(lsfwsigma,axis=0)
     # polynomial fit to the values versus wavelength
@@ -310,9 +329,9 @@ def stackspec(splist):
     lsfcoef = np.polyfit(fwave[gdw],mnlsfwsigma[gdw],2)
                 
     # Create final spectrum
-    zeros = np.zeros(splist[0].flux.shape)
-    izeros = np.zeros(splist[0].flux.shape,bool)
-    comb = Spec1D(zeros,err=zeros.copy(),mask=np.ones(splist[0].flux.shape,bool),wave=stack.wave.copy(),
+    zeros = np.zeros(nfpix)
+    izeros = np.zeros(nfpix,bool)
+    comb = Spec1D(zeros,err=zeros.copy(),mask=np.ones(nfpix,bool),wave=stack.wave.copy(),
                   instrument='NIRSpec',lsfpars=lsfcoef[::-1],lsftype=spec.lsf.lsftype,lsfxtype=spec.lsf.xtype)
     comb.cont = zeros.copy()
 
@@ -323,6 +342,8 @@ def stackspec(splist):
     comb.mask = np.bitwise_and.reduce(stack.mask,0)
     comb.err[comb.mask] = 1e30
     comb.cont = cont
+    comb.bc = np.mean(stack.bc)
+    comb.fluxcorr = np.mean(stack.fluxcorr,axis=0)
     
     return comb,stack
 
@@ -459,9 +480,21 @@ def process_exp(filename,outdir='./',clobber=False):
     return result
 
 
-def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=False):
+def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=False,fluxcorrfile=None):
     """ This extracts spectra from the JWST NIRSpec MSA data """
 
+    if fluxcorrfile is None:
+        fluxcorrfile = '/Users/nidever/jwst/2609/nirspec/nirspec_fluxcorr.fits'
+        # Load the fluxcorr file
+        ffluxcorr = fits.getdata(fluxcorrfile)
+        # wavelength coefficients with linear wavelength steps
+        # 3834 pixels, from 9799.765 to 18797.7624 A
+        wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
+        npix = 3834
+        xpix = np.arange(npix)
+        wfluxcorr = np.polyval(wcoef,xpix)
+        fluxcorr = {'flux':ffluxcorr,'wave':wfluxcorr}
+        
     if outdir.endswith('/')==False: outdir+='/'
     #if logger is None: logger=dln.basiclogger()
     
@@ -518,7 +551,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
                     backexpname = expnames[0]
             else:
                 backexpname = None
-            speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,clobber=clobber)
+            speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,clobber=clobber,fluxcorr=fluxcorr)
             srcname = [s.source_name for s in speclist]
             #slexpspec.append(slspeclist)
             expspec.append(speclist)            
@@ -594,7 +627,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
 
 
 
-def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,redtag='red'):
+def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,redtag='red',fluxcorr=None):
     """ This performs 1D-extraction of the spectra in one exposure."""
 
     #if logger is None: logger=dln.basiclogger()
@@ -746,6 +779,12 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
             #sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,ocalhdu1[ind1[0]*10+1],plotbase=plotbase)
             try:
                 sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,plotbase=plotbase)
+                # Apply the flux correction
+                if fluxcorr is not None:
+                    fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp1.wave)
+                    sp1.flux /= fluxcorr2
+                    sp1.err /= fluxcorr2                    
+                    sp1.fluxcorr = fluxcorr2                
             except:
                 traceback.print_exc()
         # NRS2
@@ -761,7 +800,13 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
                 backslit2 = backdata2.slits[bind2[0]]
             #sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,ocalhdu2[ind2[0]*10+1],plotbase=plotbase)
             try:
-                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,plotbase=plotbase)                        
+                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,plotbase=plotbase)
+                # Apply the flux correction
+                if fluxcorr is not None:
+                    fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp2.wave)
+                    sp2.flux /= fluxcorr2
+                    sp2.err /= fluxcorr2                    
+                    sp2.fluxcorr = fluxcorr2
             except:
                 traceback.print_exc()
                 
@@ -776,7 +821,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
             if sp2 is not None:
                 #slsp = slsp2
                 sp = sp2                
-            
+                
         # Save the file
         if sp is not None:
             print('Writing to '+outfile)
