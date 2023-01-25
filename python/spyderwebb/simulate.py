@@ -44,3 +44,9 @@ def slitsim(x0,y0,plot=False):
         plt.ylabel('Y (pixels)')
         plt.scatter([xcen],[ycen],marker='D',facecolor='none',edgecolor='green')
 
+def synthstar(pars,snr=100,withwiggles=True):
+    """
+    Create synthetic/fake star from the FERRE grid
+    """
+
+    

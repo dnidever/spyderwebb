@@ -551,6 +551,9 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
                     backexpname = expnames[0]
             else:
                 backexpname = None
+
+            #print('KLUDGE!!!!')
+            #expname = 'jw02609006001_03101_00003'
             speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,clobber=clobber,fluxcorr=fluxcorr)
             srcname = [s.source_name for s in speclist]
             #slexpspec.append(slspeclist)
@@ -590,6 +593,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
                     #combslsp = slsplist[0]
                     combsp = splist[0]                    
             else:
+                import pdb; pdb.set_trace()
                 #combslsp = slsplist[0]
                 combsp = splist[0]                
                 
@@ -778,9 +782,9 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
                 backslit1 = backdata1.slits[bind1[0]]
             #sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,ocalhdu1[ind1[0]*10+1],plotbase=plotbase)
             try:
-                sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,plotbase=plotbase)
+                sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,applyslitcorr=True,plotbase=plotbase)
                 # Apply the flux correction
-                if fluxcorr is not None:
+                if sp1 is not None and fluxcorr is not None:
                     fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp1.wave)
                     sp1.flux /= fluxcorr2
                     sp1.err /= fluxcorr2                    
@@ -800,9 +804,9 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
                 backslit2 = backdata2.slits[bind2[0]]
             #sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,ocalhdu2[ind2[0]*10+1],plotbase=plotbase)
             try:
-                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,plotbase=plotbase)
+                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,applyslitcorr=True,plotbase=plotbase)
                 # Apply the flux correction
-                if fluxcorr is not None:
+                if sp2 is not None and fluxcorr is not None:
                     fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp2.wave)
                     sp2.flux /= fluxcorr2
                     sp2.err /= fluxcorr2                    

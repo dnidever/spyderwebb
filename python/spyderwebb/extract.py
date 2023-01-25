@@ -573,7 +573,8 @@ def fix_outliers(im,err=None,nsigma=5,nfilter=11,niter=3):
         return outim
         
 
-def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,plotbase='extract'):
+def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
+                 applyslitcorr=True,plotbase='extract'):
     """ Extract one slit."""
 
     print('source_name:',slit.source_name)
@@ -898,17 +899,38 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,plot
     # Get the wavelengths
     pmask = (opsf > 0.01)
     #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
-    wav = np.nansum(wave*opsf,axis=0)/np.sum(opsf*np.isfinite(wave*opsf),axis=0) * 1e4  # convert to Angstroms
+    owav = np.nansum(wave*opsf,axis=0)/np.sum(opsf*np.isfinite(wave*opsf),axis=0) * 1e4  # convert to Angstroms
 
-    # Apply slit correction
+    # Slit offsets
     srcxpos = slit.source_xpos
     srcypos = slit.source_ypos
+    
+    # Get wavelengths using the trace and WCS object
+    xw = x + xlo
+    yw = otrace
+    rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
+    wav = wcs_wl * 1e4
+    if applyslitcorr:
+        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (2*srcxpos,2*srcypos))        
+        xw = x + xlo + 2*srcxpos
+        yw = otrace + 2*srcypos
+        rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
+        wav = wcs_wl_slitcorr * 1e4
+    dwave = np.gradient(wav)
+
+    #import pdb; pdb.set_trace()
+    
+    # Apply slit correction
     # SLIT correction, srcxpos is source position in slit
     # the slit is 2 pixels wide
-    dwave = np.gradient(wav)
-    newwav = wav+2*srcxpos*dwave
-    print('Applying slit correction: %.2f pixels' % (2*srcxpos))
-
+    #dwave = np.gradient(wav)
+    #import pdb; pdb.set_trace()
+    #if applyslitcorr:
+    #    newwav = wav+2*srcxpos*dwave
+    #    print('Applying slit correction: %.2f pixels' % (2*srcxpos))
+    #else:
+    #    newwav = wav
+        
     # Add the LSF information
     #  we are essentially working in a slit-less spectrograph regime
     #  the LSF is set by the seeing

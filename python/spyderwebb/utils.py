@@ -2,6 +2,10 @@ import numpy as np
 from scipy.special import erf
 from functools import wraps
 from scipy import interpolate
+from scipy.ndimage import median_filter,generic_filter
+
+def nanmedfilt(x,size,mode='reflect'):
+    return generic_filter(x, np.nanmedian, size=size)
 
 def gauss2dbin(x,amp,center,sigma):
     """ Make lots of Gaussian profiles."""
