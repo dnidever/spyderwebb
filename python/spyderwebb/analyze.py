@@ -332,7 +332,8 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     return tab,vtab
 
 
-def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0,errbar=1):
+def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,
+              nruns=1,cont=1,ncont=0,errbar=1,save=False):
     """ 
     Run FERRE on list of spectra
 
@@ -384,6 +385,8 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
          0   adopt the distance from solution at which chisq=min(chisq)+1
          1   invert the curvature matrix
        Default is 1.
+    save : bool, optional
+       Do not delete the temporary directory.  Default is save=False.
 
     Returns
     -------
@@ -423,6 +426,10 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         #spec.normalize()
         slist1 = {'filename':filename,'vrel':vrel1,'snr':spec.snr,'spec':spec}
         slist.append(slist1)
+
+    if len(slist)==0:
+        print('No spectra to fit')
+        return None,None
         
     gridfile = '/Users/nidever/synspec/winter2017/jwst/jwstgiant2b.dat'
     ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
@@ -524,34 +531,44 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
             #flux[bad] = 0.0
             err[bad] = 1e10
 
-        # Convert to ASCII for FERRE
-        obs = ''.join(['{:14.5E}'.format(f) for f in flux])
-        obserr = ''.join(['{:14.5E}'.format(e) for e in err])
-        obswave = ''.join(['{:14.5E}'.format(w) for w in wave])        
-
         # Put all the information into slist
         slist1['npix'] = len(flux)
-        slist1['ferre_flux'] = flux
-        slist1['ferre_err'] = err
-        slist1['ferre_wave'] = wave
-        slist1['ferre_fline'] = obs
-        slist1['ferre_eline'] = obserr
-        slist1['ferre_wline'] = obswave
-        slist1['ferre_pline'] = 'spec'+str(i+1)+' 4000.0  2.5  -0.5  0.1'
-        slist1['ferre_id'] = 'spec'+str(i+1)
-
+        slist1['flux'] = flux
+        slist1['err'] = err
+        slist1['wave'] = wave
+        
     # Put star with maximum npix first
     #  FERRE uses this to set the maximum pixels for ALL the spectra
-    npix = [s['npix'] for s in slist]
-    maxind = np.argmax(npix)
+    npixall = [s['npix'] for s in slist]
+    maxind = np.argmax(npixall)
+    npix = np.max(npixall)
     if maxind != 0:
         slist1 = slist.pop(maxind)
         slist = [slist1] + slist
-        npix = [s['npix'] for s in slist]
 
     # Make the list of lines to write out for FERRE
     flines,elines,wlines,plines = [],[],[],[]
     for i in range(len(slist)):
+        # Need to buffer the arrays to have consistent number of pixels
+        flux = slist[i]['flux']
+        err = slist[i]['err']
+        wave = slist[i]['wave']        
+        if len(flux)<npix:
+            nmissing = npix-len(flux)
+            flux = np.hstack((flux,np.zeros(nmissing)))
+            err = np.hstack((err,np.zeros(nmissing)+1e10))
+            wave = np.hstack((wave,np.zeros(nmissing))) 
+            
+        # Convert to ASCII for FERRE
+        obs = ''.join(['{:14.5E}'.format(f) for f in flux])
+        obserr = ''.join(['{:14.5E}'.format(e) for e in err])
+        obswave = ''.join(['{:14.5E}'.format(w) for w in wave])        
+        slist[i]['ferre_fline'] = obs
+        slist[i]['ferre_eline'] = obserr
+        slist[i]['ferre_wline'] = obswave     
+        slist[i]['ferre_pline'] = 'spec'+str(i+1)+' 4000.0  2.5  -0.5  0.1'
+        slist[i]['ferre_id'] = 'spec'+str(i+1)
+        
         flines.append(slist[i]['ferre_fline'])
         elines.append(slist[i]['ferre_eline'])
         wlines.append(slist[i]['ferre_wline'])
@@ -567,11 +584,17 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     if os.path.exists('ferre.opf'): os.remove('ferre.opf') 
     print('Running FERRE on '+str(len(slist))+' spectra')
     try:
-        out = subprocess.check_output([ferre])
+        fout = open('ferre.log','w')
+        out = subprocess.call([ferre],stdout=fout,stderr=subprocess.STDOUT)
+        fout.close()
+        loglines = dln.readlines('ferre.log')
+        #out = subprocess.check_output([ferre])
     except:
+        fout.close()        
         #traceback.print_exc()
         pass
-        
+
+    
     # Read the output
     olines = dln.readlines('ferre.opf')
     ids = np.char.array([o.split()[0] for o in olines])
@@ -643,7 +666,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         tab['filename'][i] = slist1['filename']
         tab['vrel'][i] = slist1['vrel']
         tab['snr'][i] = slist1['snr']
-        if 'pars' in slist1.keys():
+        if 'pars' in slist1.keys() and slist1['pars'] is not None:
             tab['teff'][i] = slist1['pars'][0]
             tab['tefferr'][i] = slist1['parerr'][0]
             tab['logg'][i] = slist1['pars'][1]
@@ -659,7 +682,8 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     tab = Table(tab)
     
     # Delete temporary files and directory
-    os.chdir(curdir)
-    shutil.rmtree(tmpdir)
+    if save==False:    
+        os.chdir(curdir)
+        shutil.rmtree(tmpdir)
 
     return tab,slist
