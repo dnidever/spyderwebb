@@ -332,8 +332,8 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     return tab,vtab
 
 
-def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,
-              nruns=1,cont=1,ncont=0,errbar=1,save=False):
+def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0
+              errbar=1,grid='jwstgiant4.dat',save=False,plotsdir='plots/',plots=True):
     """ 
     Run FERRE on list of spectra
 
@@ -431,7 +431,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,
         print('No spectra to fit')
         return None,None
         
-    gridfile = '/Users/nidever/synspec/winter2017/jwst/jwstgiant2b.dat'
+    gridfile = '/Users/nidever/synspec/winter2017/jwst/'+grid
     ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
 
     # Set up temporary directory
@@ -656,6 +656,16 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,
         slist1['model'] = mflux
         slist1['smflux'] = smflux
 
+        # Make plots
+        if plots:
+            if os.path.exists(plotsdir)==False: os.makedir(plotsdir)
+            plt.plot(slist1['wave'],slist1['smflux'])
+            plt.plot(slist1['wave'],slist1['model'])
+            plt.xlabel('Wavelength (A)')
+            plt.ylable('Normalized Flux')
+            plt.title(slist1['filename'])
+            plt.savefig(plotsdir+'/'+slist1['filename'].replace('.fits','.pdf'))
+            
     # Make a table
     dt = [('filename',str,200),('vrel',float),('snr',float),('teff',float),('tefferr',float),
           ('logg',float),('loggerr',float),('feh',float),('feherr',float),('alpha',float),
