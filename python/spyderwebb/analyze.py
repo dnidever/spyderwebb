@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import tempfile
 import traceback
+import matplotlib
+import matplotlib.pyplot as plt
 from . import utils
 
 cspeed = 2.99792458e5  # speed of light in km/s
@@ -332,8 +334,8 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     return tab,vtab
 
 
-def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0
-              errbar=1,grid='jwstgiant4.dat',save=False,plotsdir='plots/',plots=True):
+def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0,
+              errbar=1,grid='jwstgiant4.dat',save=False,plotsdir=None,plots=True):
     """ 
     Run FERRE on list of spectra
 
@@ -437,6 +439,8 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     # Set up temporary directory
     tmpdir = tempfile.mkdtemp(prefix='ferre')
     curdir = os.path.abspath(os.curdir)
+    if plots and plotsdir is None:
+        plotsdir = curdir+'/plots/'
     os.chdir(tmpdir)
     print('Running FERRE in temporary directory '+tmpdir)
 
@@ -633,11 +637,12 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         pars = np.array(arr[1:5]).astype(float)
         parerr = np.array(arr[5:9]).astype(float)
         logsnr2 = float(arr[10])
-        snr2 = 10**logsnr2
         try:
+            snr2 = 10**logsnr2            
             logrchisq = float(arr[11])
             rchisq = 10**logrchisq
         except:
+            snr2 = np.nan
             logrchisq = np.nan
             rchisq = np.nan
         slist1['success'] = True            
@@ -658,13 +663,29 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
 
         # Make plots
         if plots:
-            if os.path.exists(plotsdir)==False: os.makedir(plotsdir)
-            plt.plot(slist1['wave'],slist1['smflux'])
-            plt.plot(slist1['wave'],slist1['model'])
+            if os.path.exists(plotsdir)==False: os.makedirs(plotsdir)
+            backend = matplotlib.rcParams['backend']
+            matplotlib.use('Agg')
+            figsize = 10.0
+            fig,ax = plt.subplots()
+            fig.set_figheight(figsize*0.5)
+            fig.set_figwidth(figsize)
+            plt.plot(slist1['wave'],slist1['smflux'],linewidth=0.5)
+            plt.plot(slist1['wave'],slist1['model'],linewidth=0.5,alpha=0.8)
+            yr = [np.min(slist1['model']),np.max(slist1['model'])]
+            yr = [yr[0]-np.ptp(yr)*0.2,yr[1]+np.ptp(yr)*0.2]
+            medflux = np.median(slist1['smflux'])
+            sigflux = dln.mad(slist1['smflux'])
+            yr = [np.min([yr[0],medflux-2.5*sigflux]),np.max([yr[1],medflux+2.5*sigflux])]
+            plt.ylim(yr[0],yr[1])
+            plt.xlim(np.min(slist1['wave']),np.max(slist1['wave']))
             plt.xlabel('Wavelength (A)')
-            plt.ylable('Normalized Flux')
+            plt.ylabel('Normalized Flux')
             plt.title(slist1['filename'])
-            plt.savefig(plotsdir+'/'+slist1['filename'].replace('.fits','.pdf'))
+            plotfile = plotsdir+'/'+os.path.basename(slist1['filename']).replace('.fits','_ferre.pdf')
+            plt.savefig(plotfile)
+            print('Saving plot to ',plotfile)
+            matplotlib.use(backend)  # back to the original backend
             
     # Make a table
     dt = [('filename',str,200),('vrel',float),('snr',float),('teff',float),('tefferr',float),

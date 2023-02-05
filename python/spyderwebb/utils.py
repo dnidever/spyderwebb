@@ -1,8 +1,16 @@
+import os
 import numpy as np
 from scipy.special import erf
 from functools import wraps
 from scipy import interpolate
 from scipy.ndimage import median_filter,generic_filter
+
+def datadir():
+    """ Return the data/ directory."""
+    fil = os.path.abspath(__file__)
+    codedir = os.path.dirname(fil)
+    datadir = codedir+'/data/'
+    return datadir
 
 def nanmedfilt(x,size,mode='reflect'):
     return generic_filter(x, np.nanmedian, size=size)

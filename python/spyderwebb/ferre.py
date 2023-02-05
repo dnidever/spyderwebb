@@ -83,10 +83,10 @@ def gridinfo(filename):
     return out
 
 
-def interp(pars,wave=None,cont=None,ncont=None):
+def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant4.dat'):
     """ Interpolate in the FERRE grid."""
 
-    gridfile = '/Users/nidever/synspec/winter2017/jwst/jwstgiant2b.dat'
+    gridfile = '/Users/nidever/synspec/winter2017/jwst/'+grid
     ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
     info = gridinfo(gridfile)
     
@@ -299,7 +299,7 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
             slist[i]['npix'] = len(slist[i]['flux'])
         if 'id' not in slist[i].keys():
             slist[i]['id'] = i+1
-    npixall = [(s['npix'] for s in slist]
+    npixall = [s['npix'] for s in slist]
     maxind = np.argmax(npixall)
     npix = np.max(npixall)
     if maxind != 0:
