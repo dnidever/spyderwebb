@@ -6,7 +6,8 @@
 import numpy as np
 from dlnpyutils import utils as dln
 from scipy.optimize import curve_fit
-from astropy.table import Table
+from astropy.table import Table,hstack,vstack
+import traceback
 from . import extinction
 
 class Fitter(object):
@@ -128,11 +129,21 @@ def fitter(data,iso,bands,refband):
     ndata = len(data)
     
     # Loop over stars
+    results = []
     for i in range(ndata):
-        out = fitone(data[i],iso,bands,refband)
+        print('--- Star {:d} ---'.format(i+1))
+        besttab,sumtab = fitone(data[i],iso,bands,refband)
+        print(' ')
+        # Save the results
+        if len(besttab)>0:
+            besttab['index'] = i+1
+            if len(results)==0:
+                results = besttab
+            else:
+                results = vstack((results,besttab))
 
-    import pdb; pdb.set_trace()
-    
+    return results
+
 
 def fitone(data,iso,bands,refband):
     """
@@ -146,43 +157,100 @@ def fitone(data,iso,bands,refband):
     nages = len(ages)
 
     index = dln.create_index(iso['MH'])
+
+    dt = [('metal',float),('pars',float,3),('perrors',float,3),('chisq',float),('rms',float),('ngood',int),('success',bool)]
+    sumtab = np.zeros(nmetals,dtype=np.dtype(dt))
+    sumtab = Table(sumtab)
+
+    xdata = np.zeros(len(bands),float)
+    ydata = np.zeros(len(bands),float)
+    errors = np.zeros(len(xdata),float)+0.05
+    phdata = np.zeros(len(bands),float)
+    refphot = data[refband]
+    for i,b in enumerate(bands):
+        phdata[i] = data[b]
+    ydata = phdata - refphot
+    good, = np.where((phdata > 2) & (phdata<50) & np.isfinite(phdata))
+    ngood = len(good)
+    if ngood==0:
+        print('No good data to fit')
+        return [],[]
+    nbad = len(ydata)-len(good)
+    if nbad>0:
+        print(str(nbad)+' bad measurement(s)')
+    bands1 = list(np.array(bands)[good])
+    xdata = xdata[good]
+    ydata = ydata[good]
+    errors = errors[good]
+
+    print('Bands: '+', '.join(bands1))
+    print('Reference Band: '+str(refband))
     
     # Loop over metallicity and find the best solution
+    lastpars = None
+    print('  [M/H]    Teff      A(V)  log(Age)  Chisq     RMS')
     for m in range(nmetals):
         metal = index['value'][m]
         ind = index['index'][index['lo'][m]:index['hi'][m]+1]
         nind = len(ind)
         iso1 = iso[ind]
 
-        #xdata = [275,336,475,814,1100,1600]
-        #phdata = np.array([data['f275w'],data['f336mag'],data['f475w'],data['f814w'],data['f110w'],data['f160w']])
-        #ydata = phdata - phdata[3]
-        xdata = np.zeros(len(bands),float)
-        ydata = np.zeros(len(bands),float)
-        refphot = data[refband]
-        for i,b in enumerate(bands):
-            phdata[i] = data[b]
-        ydata = phdata - refphot
-            
-        #colors = np.zeros((len(iso),5),float)
-        #colors[:,0] = iso['F275Wmag']-iso['F814Wmag']
-        #colors[:,1] = iso['F336Wmag']-iso['F814Wmag']
-        #colors[:,2] = iso['F475Wmag']-iso['F814Wmag']
-        #colors[:,3] = iso['F110Wmag']-iso['F814Wmag']
-        #colors[:,4] = iso['F160Wmag']-iso['F814Wmag']
-
+        fitter = Fitter(iso1,bands1,refband)        
         # Find best teff, AV, and log(age)
-        estimates = [4500.0,0.1,np.median(iso['logAge'])]
-        errors = np.zeros(len(xdata),float)+0.05
-        bad, = np.where((phdata < 2) | (phdata>50) | (np.isfinite(phdata)==False))
-        if len(bad)>0:
-            ydata[bad] = 0.0
-            errors[bad] = 1e30
+        if lastpars is None:
+            estimates = [4500.0,0.1,np.median(iso['logAge'])]
+        else:
+            estimates = lastpars
+        # physical bounds
+        bounds = [np.zeros(3)-np.inf,np.zeros(3)+np.inf]
+        bounds[0][0] = 10**np.min(iso['logTe'])
+        bounds[1][0] = 10**np.max(iso['logTe'])        
+        bounds[0][1] = 0.0
+        bounds[0][2] = np.min(iso['logAge'])
+        bounds[1][2] = np.max(iso['logAge'])
+        try:
+            pars,pcov = curve_fit(fitter.model,xdata,ydata,p0=estimates,sigma=errors,bounds=bounds)
+            perrors = np.sqrt(np.diag(pcov))
+            obscolors = fitter.model(xdata,*pars)
+            chisq = np.sum((ydata-obscolors)**2/errors**2)
+            rms = np.sqrt(np.mean((ydata-obscolors)**2))
+            sumtab['metal'][m] = metal
+            sumtab['pars'][m] = pars
+            sumtab['perrors'][m] = perrors
+            sumtab['chisq'][m] = chisq
+            sumtab['rms'][m] = rms
+            sumtab['ngood'][m] = ngood
+            sumtab['success'][m] = True
+            print('{:7.2f} {:9.3f} {:7.3f} {:7.3f} {:9.3f} {:7.3f}'.format(metal,*pars,chisq,rms))
+            lastpars = pars
+        except:
+            traceback.print_exc()
+            sumtab['metal'][m] = metal
+            sumtab['ngood'][m] = ngood
+            sumtab['chisq'][m] = np.nan
+            sumtab['rms'][m] = np.nan            
+            sumtab['success'][m] = False
 
-        #bands = ['F275Wmag','F336Wmag','F475Wmag','F814Wmag','F110Wmag','F160Wmag']
-        #refband = 'F814Wmag'
-        fitter = Fitter(iso,bands,refband)
-            
-        pars,pcov = curve_fit(fitter.model,xdata,ydata,p0=estimates,sigma=errors)
+    # Best value
+    bestind = np.argmin(sumtab['chisq'])
+    besttab = sumtab[[bestind]]
+    besttab['teff'] = 0.0
+    besttab['tefferr'] = 0.0    
+    besttab['av'] = 0.0
+    besttab['averr'] = 0.0    
+    besttab['logage'] = 0.0
+    besttab['logageerr'] = 0.0
+    besttab['agemyr'] = 0.0    
+    besttab['teff'] = besttab['pars'][0][0]
+    besttab['tefferr'] = besttab['perrors'][0][0]    
+    besttab['av'] = besttab['pars'][0][1]
+    besttab['averr'] = besttab['perrors'][0][1]    
+    besttab['logage'] = besttab['pars'][0][2]
+    besttab['logageerr'] = besttab['perrors'][0][2]
+    besttab['agemyr'] = (10**besttab['logage'][0])/1e6
+    
+    print('Best values:')
+    print('{:7.2f} {:9.3f} {:7.3f} {:7.3f} {:9.3f} {:7.3f}'.format(besttab['metal'][0],*besttab['pars'][0],besttab['chisq'][0],besttab['rms'][0]))
+    
+    return besttab,sumtab
 
-        import pdb; pdb.set_trace()
