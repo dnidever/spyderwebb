@@ -46,7 +46,67 @@ class Fitter(object):
             extdict,exttab = extinction.load()
             self._extdict = extdict
             self._exttab = exttab
+
+    def __call__(self,*pars):
+        """ Interpolate in the grid."""
+        # Pars are teff, log(age)
+        teff = pars[0]
+        logteff = np.log10(teff)
+        logage = pars[1]
+        # Get model values
+
+        phot = Table(np.zeros(1,dtype=self.iso.dtype))
+        for c in phot.colnames: phot[c]=np.nan
+        
+        # Beyond ages in the model, return bad values
+        if logage < np.min(self.logages) or logage >np.max(self.logages):
+            return phot
             
+        # At the edge
+        if logage == np.min(self.logages) or logage == np.max(self.logages):
+            if logage==np.min(self.logages):
+                iso1 = self.iso[self.index[0]]
+            else:
+                iso1 = self.iso[self.index[-1]]                
+            # Interpolate all iso columns
+            for c in phot.colnames:
+                phot[c] = dln.interp(iso1['logTe'],iso1[c],logteff,kind='quadratic',bounds_error=False,fill_value=np.nan)
+
+        # We have two points
+        else:
+        
+            # Get high and low ages
+            aind = np.searchsorted(self.logages,logage)   # returns index just above the value
+            alo = aind-1
+            loage = self.logages[alo]
+            loiso = self.iso[self.index[alo]]
+            ahi = aind
+            hiage = self.logages[ahi]
+            hiiso = self.iso[self.index[ahi]]
+            # wtfrac is weight of lower value, (1-wtfrac) is weight of upper value        
+            wtfrac = (hiage-logage)/(hiage-loage)  
+
+            # Interpolate all iso columns            
+            for c in phot.colnames:            
+                loval = dln.interp(loiso['logTe'],loiso[c],logteff,kind='quadratic',assume_sorted=False,
+                                   bounds_error=False,fill_value=np.nan)
+                hival = dln.interp(hiiso['logTe'],hiiso[c],logteff,kind='quadratic',assume_sorted=False,
+                                   bounds_error=False,fill_value=np.nan)
+                lofinite = np.isfinite(loval)
+                hifinite = np.isfinite(hival)
+                vals = []
+                if lofinite: vals.append(loval)
+                if hifinite: vals.append(hival)
+                if len(vals)==0:
+                    phot[c] = np.nan
+                elif len(vals)==1:
+                    phot[c] = vals[0]
+                else:
+                    phot[c] = wtfrac*vals[0] + (1-wtfrac)*vals[1]
+                    
+        return phot
+
+        
     def model(self,x,*pars):
         # Pars are teff, A(V), log(age)
         teff = pars[0]
