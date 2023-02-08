@@ -838,12 +838,9 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
     Example
     -------
 
-    tab,info = fit(files,vrel,algor=1,nruns=5)
+    tab,info = cfit(files,vrel)
 
     """
-
-    # ALLOW A PARAMETER FOR USING THE Teff/logg/feh/alpha plane!!!!
-    # either logg or feh (from the other three)
 
 
     ## Loop over the files
@@ -878,18 +875,22 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
     for i in range(nspectra):
         if verbose:
             print('Star '+str(i+1))
-            print('---------')
+            print('--------')
         slist1 = slist[i]
         vrel1 = vrel[i]
         spec = slist1['spec']
         spec.vrel = vrel1
         # Initialize the FERRE object
-        fr = FERRE(loggrelation=loggrelation,verbose=verbose)                
+        fr = FERRE(loggrelation=loggrelation,verbose=(verbose>1))                
         # Prepare spectrum for FERRE
         pspec = specprep(spec)
+        # Now normalize
         newflux = fr.normalize(pspec['wave'],pspec['flux'])
+        cont = pspec['flux']/newflux
         pspec['oflux'] = pspec['flux']
+        pspec['oerr'] = pspec['err']        
         pspec['flux'] = newflux
+        pspec['err'] = pspec['oerr']/cont      
         # Normalize
         fr.outwave = pspec['wave']
         if loggrelation:
@@ -899,23 +900,29 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
             estimates = [4500.0,2.5,-1.0,0.0]
             bounds = [fr.ranges[:,0],fr.ranges[:,1]]
         # Run curve_fit
-        pars,pcov = curve_fit(fr.model,pspec['wave'],pspec['flux'],p0=estimates,
-                              sigma=pspec['err'],bounds=bounds,jac=fr.jac)
-        perror = np.sqrt(np.diag(pcov))
-        bestmodel = fr.model(pspec['wave'],*pars)
-        chisq = np.sum((pspec['flux']-bestmodel)**2/pspec['err']**2)/len(pspec['flux'])
+        try:
+            pars,pcov = curve_fit(fr.model,pspec['wave'],pspec['flux'],p0=estimates,
+                                  sigma=pspec['err'],bounds=bounds,jac=fr.jac)
+            perror = np.sqrt(np.diag(pcov))
+            bestmodel = fr.model(pspec['wave'],*pars)
+            chisq = np.sum((pspec['flux']-bestmodel)**2/pspec['err']**2)/len(pspec['flux'])
 
-        # Get full parameters
-        if loggrelation:
-            fullpars = fr.getlogg(pars)
-        else:
-            fullpars = pars
+            # Get full parameters
+            if loggrelation:
+                fullpars = fr.getlogg(pars)
+            else:
+                fullpars = pars
         
-        out1 = {'vrel':vrel1,'pars':pars,'perror':perror,'wave':pspec['wave'],'flux':pspec['flux'],
-                'err':pspec['err'],'model':bestmodel,'chisq':chisq,'loggrelation':loggrelation}
-        
+            out1 = {'index':i,'vrel':vrel1,'pars':pars,'perror':perror,'wave':pspec['wave'],'flux':pspec['flux'],
+                    'err':pspec['err'],'model':bestmodel,'chisq':chisq,'loggrelation':loggrelation,'success':True}
+            success = True
+        except:
+            traceback.print_exc()
+            success = False
+            out1 = {'success':False}
+                
         # Remove outliers and refit
-        if outlier:
+        if success and outlier:
             diff = pspec['flux']-bestmodel
             med = np.median(diff)
             sig = dln.mad(diff)
@@ -944,9 +951,14 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
                 else:
                     fullpars = pars
                 
-                out1 = {'vrel':vrel1,'pars':fullpars,'perror':perror,'wave':pspec['wave'],'flux':pspec['flux'],
-                        'err':pspec['err'],'mflux':flux,'merr':err,'model':bestmodel,'chisq':chisq,'loggrelation':loggrelation}
-                
+                out1 = {'index':i,'vrel':vrel1,'pars':fullpars,'perror':perror,'wave':pspec['wave'],'flux':pspec['flux'],
+                        'err':pspec['err'],'mflux':flux,'merr':err,'noutlier':nbd,'model':bestmodel,'chisq':chisq,
+                        'loggrelation':loggrelation,'success':True}
+
+        if verbose and success:
+            print('Best parameters: ',out1['pars'])
+            print('Chisq: ',out1['chisq'])
+            
         out.append(out1)
 
     return out
