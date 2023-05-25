@@ -6,6 +6,7 @@ import doppler
 from doppler import spec1d
 from astropy.table import Table,hstack,Column
 from astropy.io import fits
+from chronos import isochrone
 import shutil
 import subprocess
 import tempfile
@@ -718,3 +719,85 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         shutil.rmtree(tmpdir)
 
     return tab,slist
+
+def distances(tab,isogrid=None):
+    """
+    Derives distances from isochrones.
+    """
+
+    if isogrid is None:
+        print('Loading isochrone grid')
+        isotab = Table.read('/Users/nidever/isochrone/parsec_hst/parsec_hst_phot_giants.fits.gz')
+        for c in isotab.colnames: isotab[c].name=c.upper()
+        isotab['AGE'] = 10**isotab['LOGAGE']
+        isotab['METAL'] = isotab['MH']
+        isotab['F275WMAG'].name = 'HST_F275WMAG'
+        isotab['F336WMAG'].name = 'HST_F336WMAG'
+        isotab['F475WMAG'].name = 'HST_F475WMAG'
+        isotab['F814WMAG'].name = 'HST_F814WMAG'
+        isotab['F110WMAG'].name = 'HST_F110WMAG'
+        isotab['F160WMAG'].name = 'HST_F160WMAG'
+        isogrid = isochrone.IsoGrid(isotab)
+        
+    # Each star must have Teff, logg, feh and alpha
+    # We'll get distances for a couple ages
+
+    ntab = len(tab)
+    dt = [('dist1',float),('dist3',float),('dist5',float),('dist7',float),('dist10',float),('dist12',float),('mndist',float)]
+    out = np.zeros(ntab,dtype=np.dtype(dt))
+    ages = [1e9, 3e9, 5e9, 7e9, 10e9, 12e9]
+    # Loop over the stars
+    for i in range(ntab):
+        teff = tab['teff'][i]
+        logg = tab['logg'][i]
+        feh = tab['feh'][i]
+        alpha = tab['alpha'][i]        
+        # Salaris correction feh
+        salfeh = feh + np.log10(0.659*(10**alpha)+0.341)
+        usefeh = np.maximum(np.minimum(salfeh,isogrid.maxmetal),isogrid.minmetal)
+        # Age loop
+        distarr = np.zeros(6)
+        for a,age in enumerate(ages):
+            # Get the isochrone
+            iso = isogrid(age,usefeh,closest=True)
+
+            # EXTINCTION from BEAST
+            av = tab['beast_Av'][i]
+            rv = tab['beast_Rv'][i]
+            iso.ext = av   # extinct the isochrone
+            
+            data1 = iso.data[0:1]
+            for c in iso.colnames:
+                data1[c] = dln.interp(iso.data['LOGTE'],iso.data[c],np.log10(teff),kind='quadratic',assume_sorted=False)
+            
+            # Get distance modulus from f160w and f475w
+            agename = 'dist'+str(int(age/1e9))
+            obsmags = [tab['f275w'][i], tab['f336w'][i], tab['f475w'][i], tab['f814w'][i], tab['f110w'][i], tab['f160w'][i]]
+            obsmags = np.array(obsmags)
+            isomags = [data1['HST_F275WMAG'][0], data1['HST_F336WMAG'][0], data1['HST_F475WMAG'][0], data1['HST_F814WMAG'][0],
+                       data1['HST_F110WMAG'][0],data1['HST_F160WMAG'][0]]
+            isomags = np.array(isomags)
+            distmodarr = obsmags - isomags
+            good, = np.where((obsmags < 50) & (isomags < 0))
+            if len(good)>0:
+            #if data1['HST_F160WMAG'][0] < 0:
+                #distmodarr = [tab['f275w'][i]-data1['HST_F275WMAG'][0],
+                #              tab['f336w'][i]-data1['HST_F336WMAG'][0],
+                #              tab['f475w'][i]-data1['HST_F475WMAG'][0],
+                #              tab['f814w'][i]-data1['HST_F814WMAG'][0],
+                #              tab['f110w'][i]-data1['HST_F110WMAG'][0],
+                #              tab['f160w'][i]-data1['HST_F160WMAG'][0]]
+                distmod = np.mean(distmodarr[good])
+                dist = 10**(1+distmod/5) / 1e3  # kpc
+                out[agename][i] = dist
+            else:
+                out[agename][i] = np.nan
+            distarr[a] = out[agename][i]
+            
+        mndist = np.nanmean(distarr)
+        out['mndist'][i] = mndist
+        
+        fmt = '{:5d} {:9.1f} {:7.3f} {:8.3f} {:8.3f} {:8.3f}  {:9.1f} {:9.1f} {:9.1f} {:9.1f} {:9.1f} {:9.1f}  {:9.1f}'
+        print(fmt.format(i+1,teff,logg,feh,alpha,usefeh,*distarr,mndist))
+        
+    return out

@@ -8,6 +8,7 @@ import shutil
 from dlnpyutils import utils as dln
 from scipy.optimize import curve_fit
 from theborg import emulator
+from astropy.table import Table
 from doppler.spec1d import Spec1D,continuum
 from . import utils
 
@@ -320,7 +321,7 @@ class FERRE(object):
                                                                              self.info['WAVE'][1],self.npix)
         return out 
         
-    def __call__(self,pars,wave=None,cnorder=None,cperclevel=None,cbinsize=None):
+    def __call__(self,pars,wave=None,cnorder=None,cperclevel=None,cbinsize=None,norm=True):
         """
         pars: array of parameters.  Can be 2D [Nstars,Nlabels].
         """
@@ -332,7 +333,7 @@ class FERRE(object):
             cperclevel = self.cperclevel
         if cbinsize is None:
             cbinsize = self.cbinsize
-
+            
         pars = np.array(pars)
         if pars.ndim==2:
             ninputlabels = pars.shape[1]
@@ -366,7 +367,7 @@ class FERRE(object):
         out = interp(newpars,wave=wave)
 
         # Now do the continuum normalization
-        if cnorder is not None:
+        if cnorder is not None and norm==True:
             wave = out['wave']
             flux = out['flux'].copy()
             if nobj==1:
@@ -388,7 +389,7 @@ class FERRE(object):
             alpha = newpars[self.alphaind]
         else:
             alpha = 0.0
-        logg = self.logg_model([teff,feh,alpha])
+        logg = self.logg_model([teff,feh,alpha],border='extrapolate')
         newpars[self.loggind] = logg
         return newpars
 
@@ -804,7 +805,7 @@ def specprep(spec,vrel=None):
 
 
 def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
-         outlier=True,verbose=False):
+         initgrid=True,outlier=True,verbose=False):
     """ 
     Fit spectrum with curve_fit running FERRE to get the models
     for each set of parameters.
@@ -874,12 +875,16 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
     out = []
     for i in range(nspectra):
         if verbose:
+            if i>0: print(' ')
             print('Star '+str(i+1))
-            print('--------')
+            print('-------')
         slist1 = slist[i]
         vrel1 = vrel[i]
         spec = slist1['spec']
         spec.vrel = vrel1
+        if verbose:
+            print('Vrel: {:.2f} km/s'.format(vrel1))
+            print('S/N: {:.2f}'.format(spec.snr))
         # Initialize the FERRE object
         fr = FERRE(loggrelation=loggrelation,verbose=(verbose>1))                
         # Prepare spectrum for FERRE
@@ -899,6 +904,42 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
         else:
             estimates = [4500.0,2.5,-1.0,0.0]
             bounds = [fr.ranges[:,0],fr.ranges[:,1]]
+
+
+        # Run grid of ~100 points to get first estimate
+        if initgrid:
+            if loggrelation:
+                nsample = 5
+                tstep = np.ptp(fr.ranges[0,:])/nsample
+                tgrid = np.arange(nsample)*tstep+fr.ranges[0,0]+tstep*0.5
+                mstep = np.ptp(fr.ranges[2,:])/nsample
+                mgrid = np.arange(nsample)*mstep+fr.ranges[2,0]+mstep*0.5
+                astep = np.ptp(fr.ranges[3,:])/nsample
+                agrid = np.arange(nsample)*astep+fr.ranges[3,0]+astep*0.5
+                tgrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,mgrid,agrid)
+                gridpars = np.vstack((tgrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            else:
+                nsample = 4
+                tstep = np.ptp(fr.ranges[0,:])/nsample
+                tgrid = np.arange(nsample)*tstep+fr.ranges[0,0]+tstep*0.5
+                gstep = np.ptp(fr.ranges[1,:])/nsample
+                ggrid = np.arange(nsample)*gstep+fr.ranges[1,0]+gstep*0.5            
+                mstep = np.ptp(fr.ranges[2,:])/nsample
+                mgrid = np.arange(nsample)*mstep+fr.ranges[2,0]+mstep*0.5
+                astep = np.ptp(fr.ranges[3,:])/nsample
+                agrid = np.arange(nsample)*astep+fr.ranges[3,0]+astep*0.5  
+                tgrid2d,ggrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,ggrid,mgrid,agrid)
+                gridpars = np.vstack((tgrid2d.flatten(),ggrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            if verbose:
+                print('Testing an initial grid of '+str(gridpars.shape[0])+' spectra')
+            # Run FERRE
+            specgrid = fr(gridpars,wave=pspec['wave'])
+            chisqarr = np.sum((specgrid['flux']-pspec['flux'])**2/pspec['err']**2,axis=1)/len(pspec['flux'])
+            bestind = np.argmin(chisqarr)
+            estimates = gridpars[bestind,:]
+        if verbose:
+            print('Initial estimates: ',estimates)
+        
         # Run curve_fit
         try:
             pars,pcov = curve_fit(fr.model,pspec['wave'],pspec['flux'],p0=estimates,
@@ -910,11 +951,21 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
             # Get full parameters
             if loggrelation:
                 fullpars = fr.getlogg(pars)
+                fullperror = np.insert(perror,fr.loggind,0.0)
             else:
                 fullpars = pars
-        
-            out1 = {'index':i,'vrel':vrel1,'pars':pars,'perror':perror,'wave':pspec['wave'],'flux':pspec['flux'],
-                    'err':pspec['err'],'model':bestmodel,'chisq':chisq,'loggrelation':loggrelation,'success':True}
+                fullperror = perror
+
+            if verbose:
+                printvals = [fullpars[0],fullperror[0],fullpars[1],fullperror[1],fullpars[2],fullperror[2],
+                             fullpars[3],fullperror[3]]
+                print('Best parameters: {:f}+/-{:.3g}, {:.3f}+/-{:.3g}, {:.3f}+/-{:.3g}, {:.3f}+/-{:.3g}'.format(*printvals))
+                print('Chisq: ',chisq)
+
+            # Construct the output dictionary
+            out1 = {'index':i,'vrel':vrel1,'snr':spec.snr,'pars':fullpars,'perror':fullperror,'wave':pspec['wave'],
+                    'flux':pspec['flux'],'err':pspec['err'],'model':bestmodel,'chisq':chisq,
+                    'loggrelation':loggrelation,'success':True}
             success = True
         except:
             traceback.print_exc()
@@ -939,64 +990,56 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
                 pars0 = pars
                 estimates = pars0
                 # Run curve_fit
-                pars,pcov = curve_fit(fr.model,pspec['wave'],flux,p0=estimates,
-                                      sigma=err,bounds=bounds,jac=fr.jac)
-                perror = np.sqrt(np.diag(pcov))
-                bestmodel = fr.model(pspec['wave'],*pars)
-                chisq = np.sum((flux-bestmodel)**2/err**2)/len(flux)
+                try:
+                    pars,pcov = curve_fit(fr.model,pspec['wave'],flux,p0=estimates,
+                                          sigma=err,bounds=bounds,jac=fr.jac)
+                    perror = np.sqrt(np.diag(pcov))
+                    bestmodel = fr.model(pspec['wave'],*pars)
+                    chisq = np.sum((flux-bestmodel)**2/err**2)/len(flux)
 
-                # Get full parameters
-                if loggrelation:
-                    fullpars = fr.getlogg(pars)
-                else:
-                    fullpars = pars
+                    # Get full parameters
+                    if loggrelation:
+                        fullpars = fr.getlogg(pars)
+                        fullperror = np.insert(perror,fr.loggind,0.0)
+                    else:
+                        fullpars = pars
+                        fullperror = perror
+
+                    if verbose:
+                        printvals = [fullpars[0],fullperror[0],fullpars[1],fullperror[1],fullpars[2],fullperror[2],
+                                     fullpars[3],fullperror[3]]
+                        print('Best parameters: {:f}+/-{:f}, {:.3f}+/-{:.3f}, {:.3f}+/-{:.3f}, {:.3f}+/-{:.3f}'.format(*printvals))
+                        print('Chisq: ',chisq)
+                        
+                    # Construct the output dictionary
+                    out1 = {'index':i,'vrel':vrel1,'snr':spec.snr,'pars':fullpars,'perror':fullperror,'wave':pspec['wave'],
+                            'flux':pspec['flux'],'err':pspec['err'],'mflux':flux,'merr':err,'noutlier':nbd,'model':bestmodel,
+                            'chisq':chisq,'loggrelation':loggrelation,'success':True}
+                    success = True
+                except:
+                    traceback.print_exc()
+                    success = False
+                    out1 = {'success':False}
                 
-                out1 = {'index':i,'vrel':vrel1,'pars':fullpars,'perror':perror,'wave':pspec['wave'],'flux':pspec['flux'],
-                        'err':pspec['err'],'mflux':flux,'merr':err,'noutlier':nbd,'model':bestmodel,'chisq':chisq,
-                        'loggrelation':loggrelation,'success':True}
-
-        if verbose and success:
-            print('Best parameters: ',out1['pars'])
-            print('Chisq: ',out1['chisq'])
+        #if verbose and success:
+        #    print('Best parameters: ',out1['pars'])
+        #    print('Chisq: ',out1['chisq'])
             
         out.append(out1)
 
-    return out
+    # Create output table
+    dt = [('index',int),('vrel',float),('snr',float),('pars',float,4),('perror',float,4),('chisq',float),('success',bool)]
+    tab = np.zeros(len(out),dtype=np.dtype(dt))
+    for i,o in enumerate(out):
+        if o['success']:
+            tab['index'][i] = o['index']
+            tab['vrel'][i] = o['vrel']
+            tab['snr'][i] = o['snr']                        
+            tab['pars'][i] = o['pars']	 
+            tab['perror'][i] = o['perror']
+            tab['chisq'][i] = o['chisq']
+            tab['success'][i] = o['success']
+    tab = Table(tab)
 
-
-def testcloud(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat'):
-
-
-    if type(slist) is not list:
-        slist = [slist]
-    nspectra = len(slist)
-    
-    # Loop over spectra
-    for i in range(nspectra):
-        slist1 = slist[i]
-        vrel1 = vrel[i]
-        spec = slist1['spec']
-        spec.vrel = vrel1
-        # Prepare spectrum for FERRE
-        pspec = specprep(spec)
-
-        # need to normalize the spectrum with running mean!!
-
-        # DO MY OWN continuum normalization of the observed and FERRE spectra!
         
-        fr = FERRE(cont=cont,ncont=ncont,loggrelation=loggrelation)        
-        fr.outwave = pspec['wave']
-        import pdb; pdb.set_trace()
-        if loggrelation:
-            estimates = [4500.0,-1.0,0.0]
-            bounds = [fr.ranges[:,0],fr.ranges[:,1]]
-        else:
-            estimates = [4500.0,2.5,-1.0,0.0]
-            bounds = [fr.ranges[:,0],fr.ranges[:,1]]              
-        pars,pcov = curve_fit(fr.model,pspec['wave'],pspec['flux'],p0=estimates,sigma=pspec['err'],jac=fr.jac)
-        perror = np.sqrt(np.diag(pcov))
-
-        import pdb; pdb.set_trace()
-
-
-    import pdb; pdb.set_trace()    
+    return out,tab
