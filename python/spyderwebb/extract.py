@@ -606,7 +606,7 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     err = slit.err.copy()[:,xlo:xhi+1].astype(float)
     wave = slit.wavelength[:,xlo:xhi+1].astype(float)
     ny,nx = im.shape
-    bad = (err<=0)
+    bad = (err<=0) | (~np.isfinite(err)) | (~np.isfinite(im))
     im[bad] = np.nan
     err[bad] = 1e30
     # Number of good pixels per column
@@ -669,7 +669,7 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     trcoef = np.polyfit(xtr,ytr,3)    
     xtrace0 = np.arange(nx)
     ytrace0 = np.interp(xtrace0,xtr,ytr)
-
+    
     # Build Gaussian PSF model based on this trace
     y = np.arange(ny)
     yy = y.reshape(-1,1) + np.zeros(nx).reshape(1,-1)
