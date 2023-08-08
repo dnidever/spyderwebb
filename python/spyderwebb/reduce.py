@@ -193,6 +193,8 @@ def stackspec(splist):
     wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
     nfpix = 3834
     fwave = np.polyval(wcoef,np.arange(nfpix))
+
+    hasfluxcorr = hasattr(splist[0],'fluxcorr')
     
     # initialize array for stack of interpolated spectra
     zeros = np.zeros([nspec,nfpix])
@@ -202,7 +204,8 @@ def stackspec(splist):
     stack.err = zeros.copy()+1e30
     stack.wave = fwave
     stack.mask = np.ones([nspec,nfpix],bool)
-    stack.fluxcorr = np.ones([nspec,nfpix])
+    if hasfluxcorr:
+        stack.fluxcorr = np.ones([nspec,nfpix])
     stack.cont = zeros.copy()
     stack.bc = np.zeros(nspec,float)
     lsfwsigma = np.zeros([nspec,nfpix],bool)+np.nan
@@ -230,7 +233,8 @@ def stackspec(splist):
                 err = spec.err[gdpix,o]
                 mask = spec.mask[gdpix,o]
                 lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]
-                fluxcorr = spec.fluxcorr[gdpix,o]
+                if hasfluxcorr:
+                    fluxcorr = spec.fluxcorr[gdpix,o]
             else:
                 gdpix, = np.where(spec.wave > 0)
                 ngdpix = len(gdpix)
@@ -238,8 +242,9 @@ def stackspec(splist):
                 flux = spec.flux[gdpix]
                 err = spec.err[gdpix]
                 mask = spec.mask[gdpix]
-                lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]                
-                fluxcorr = spec.fluxcorr[gdpix]
+                lsfpars = np.atleast_2d(spec.lsf.pars)[:,o]
+                if hasfluxcorr:
+                    fluxcorr = spec.fluxcorr[gdpix]
 
             # Rescale NRS1 to NRS2 levels
             if spec.ndim==2 and o==0:
@@ -292,7 +297,8 @@ def stackspec(splist):
             newflux = dln.interp(wave,flux,fwave[gd],kind='cubic',extrapolate=False)
             newerr = dln.interp(wave,err,fwave[gd],kind='cubic',extrapolate=False)
             newmask = dln.interp(wave,mask.astype(float),fwave[gd],kind='cubic',extrapolate=False)
-            newfluxcorr = dln.interp(wave,fluxcorr,fwave[gd],kind='cubic',extrapolate=False)                        
+            if hasfluxcorr:
+                newfluxcorr = dln.interp(wave,fluxcorr,fwave[gd],kind='cubic',extrapolate=False)                        
             #gd, = np.where(np.isfinite(newflux))
             
             # From output flux, get continuum to remove, so that all spectra are
@@ -304,7 +310,8 @@ def stackspec(splist):
             #stack.wave[0:len(fwave)] = fwave
             stack.flux[i,gd] = newflux / stack.cont[i,gd]
             stack.err[i,gd] = newerr / stack.cont[i,gd]
-            stack.fluxcorr[i,gd] = newfluxcorr
+            if hasfluxcorr:
+                stack.fluxcorr[i,gd] = newfluxcorr
             # For mask, set bits where interpolated value is below some threshold to "good"
             goodmask, = np.where(newmask < 0.5)
             if len(goodmask)>0:
@@ -343,7 +350,8 @@ def stackspec(splist):
     comb.err[comb.mask] = 1e30
     comb.cont = cont
     comb.bc = np.mean(stack.bc)
-    comb.fluxcorr = np.mean(stack.fluxcorr,axis=0)
+    if hasfluxcorr:
+        comb.fluxcorr = np.mean(stack.fluxcorr,axis=0)
     
     return comb,stack
 
@@ -483,18 +491,19 @@ def process_exp(filename,outdir='./',clobber=False):
 def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=False,fluxcorrfile=None):
     """ This extracts spectra from the JWST NIRSpec MSA data """
 
-    if fluxcorrfile is None:
-        fluxcorrfile = '/Users/nidever/jwst/2609/nirspec/nirspec_fluxcorr.fits'
-        # Load the fluxcorr file
-        ffluxcorr = fits.getdata(fluxcorrfile)
-        # wavelength coefficients with linear wavelength steps
-        # 3834 pixels, from 9799.765 to 18797.7624 A
-        wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
-        npix = 3834
-        xpix = np.arange(npix)
-        wfluxcorr = np.polyval(wcoef,xpix)
-        fluxcorr = {'flux':ffluxcorr,'wave':wfluxcorr}
-        
+    #if fluxcorrfile is None:
+    #    fluxcorrfile = '/Users/nidever/jwst/2609/nirspec/nirspec_fluxcorr.fits'
+    #    # Load the fluxcorr file
+    #    ffluxcorr = fits.getdata(fluxcorrfile)
+    #    # wavelength coefficients with linear wavelength steps
+    #    # 3834 pixels, from 9799.765 to 18797.7624 A
+    #    wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
+    #    npix = 3834
+    #    xpix = np.arange(npix)
+    #    wfluxcorr = np.polyval(wcoef,xpix)
+    #    fluxcorr = {'flux':ffluxcorr,'wave':wfluxcorr}
+    fluxcorr = None
+    
     if outdir.endswith('/')==False: outdir+='/'
     #if logger is None: logger=dln.basiclogger()
     
