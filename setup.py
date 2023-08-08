@@ -5,7 +5,7 @@ from setuptools import setup, find_packages, find_namespace_packages
 from setuptools.command.install import install
 
 setup(name='spyderwebb',
-      version='1.0.2',
+      version='1.0.3',
       description='JWST NIRSpec reduction software',
       author='David Nidever',
       author_email='dnidever@montana.edu',
