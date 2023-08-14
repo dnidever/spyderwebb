@@ -54,7 +54,7 @@ def readspec(filename):
             spec.wave = orig.wave[gd]
             spec.mask = orig.mask[gd]
             spec.numpix[0] = npix
-            if hasattr(spec,'_cont'):
+            if hasattr(spec,'_cont') and spec._cont is not None:
                 spec._cont = spec._cont[gd]
         else:
             orig = spec.copy()
@@ -65,7 +65,7 @@ def readspec(filename):
             spec.err = np.zeros([npix,2],float)+1e30
             spec.mask = np.ones([npix,2],bool)
             spec.wave = np.zeros([npix,2],float)
-            if hasattr(spec,'_cont'):
+            if hasattr(spec,'_cont') and spec._cont is not None:
                 spec.cont = np.zeros([npix,2],float)
             for i in range(2):
                 gd, = np.where((orig.wave[:,i] < wthresh) & (orig.wave[:,i]>0))
@@ -74,7 +74,7 @@ def readspec(filename):
                 spec.err[0:len(gd),i] = orig.err[gd,i]
                 spec.mask[0:len(gd),i] = orig.mask[gd,i]
                 spec.wave[0:len(gd),i] = orig.wave[gd,i]                
-                if hasattr(spec,'_cont'):
+                if hasattr(spec,'_cont') and spec._cont is not None:
                     spec._cont[0:len(gd),i] = spec._cont[gd,i]            
     spec._cont = continuum(spec)
     return spec
