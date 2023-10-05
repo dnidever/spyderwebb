@@ -3,6 +3,7 @@ import copy
 import time
 import numpy as np
 import traceback
+from astropy.table import Table
 from scipy.optimize import curve_fit
 from theborg.emulator import Emulator
 from doppler.spec1d import Spec1D
@@ -14,9 +15,11 @@ class JWSTSyn():
     
     def __init__(self,spobs=None,loggrelation=False,verbose=False):
         # Load the ANN models
-        datadir = '/Users/nidever/synspec/nodegrid/'
-        emwarm = Emulator.read(datadir+'grid7/grid7_annmodel_300neurons_0.0001rate_20000steps.pkl')
-        emcool = Emulator.read(datadir+'grid8/grid8_annmodel_300neurons_0.0001rate_20000steps.pkl')        
+        #datadir = '/Users/nidever/synspec/nodegrid/'
+        #emwarm = Emulator.read(datadir+'grid7/grid7_annmodel_300neurons_0.0001rate_20000steps.pkl')
+        #emcool = Emulator.read(datadir+'grid8/grid8_annmodel_300neurons_0.0001rate_20000steps.pkl')
+        emwarm = Emulator.read(utils.datadir()+'ann_28pars_warm.pkl')
+        emcool = Emulator.read(utils.datadir()+'ann_28pars_cool.pkl')
         self._models = [emcool,emwarm]
         self.nmodels = len(self._models)
         self.labels = self._models[0].label_names
@@ -58,12 +61,19 @@ class JWSTSyn():
         npix_syn = 22001
         self._wsyn = np.arange(npix_syn)*0.5+9000
 
+        # Get logg label
+        loggind, = np.where(np.char.array(self.labels).lower()=='logg')
+        if len(loggind)==0:                
+            raise ValueError('No logg label')
+        self.loggind = loggind[0]
+        
         # Load the ANN model
         logg_model = Emulator.load(utils.datadir()+'apogeedr17_rgb_logg_ann.npz')
         self.logg_model = logg_model
         
         self.loggrelation = loggrelation
         self.verbose = verbose
+        self.fitparams = None
         self.njac = 0
         
     def mklabels(self,pars):
@@ -85,18 +95,23 @@ class JWSTSyn():
                 raise ValueError('pars must at least have teff and logg')
         # List or array input
         else:
-            labels = pars
-            if len(labels)<len(self.labels):
-                raise ValueError('pars must have '+str(len(self.labels))+' elements')
+            if self.fitparams is not None and len(pars) != len(self.labels):
+                if len(pars) != len(self.fitparams):
+                    raise ValueError('pars size not consistent with fitparams')
+                labels = np.zeros(self.nlabels)
+                for i in range(len(pars)):
+                    ind, = np.where(np.array(self.labels)==self.fitparams[i])
+                    labels[ind] = pars[i]
+            else:
+                labels = pars
+            #if len(labels)<len(self.labels):
+            #    raise ValueError('pars must have '+str(len(self.labels))+' elements')
 
         return labels
         
     def inrange(self,pars):
         """ Check that the parameters are in range."""
-        if type(pars) is dict:
-            labels = self.mklabels(pars)
-        else:
-            labels = pars
+        labels = self.mklabels(pars)
         # Check temperature
         rr = [self._ranges[0,0,0],self._ranges[1,0,1]]
         if labels[0]<rr[0] or labels[0]>rr[1]:
@@ -127,13 +142,41 @@ class JWSTSyn():
         logg = self.logg_model([teff,feh,alpha],border='extrapolate')
         newpars[self.loggind] = logg
         return newpars
-    
+
+    def printpars(self,pars,perror):
+        """ Print out parameters and errors."""
+        
+        for i in range(len(pars)):
+            if self.fitparams is not None and len(pars) != self.nlabels:
+                name = self.fitparams[i]
+            else:
+                name = self.labels[i]
+            if i==0:
+                print('{:6s}: {:10.1f} +/- {:5.2g}'.format(name,pars[i],perror[i]))
+            else:
+                print('{:6s}: {:10.4f} +/- {:5.3g}'.format(name,pars[i],perror[i]))
+
+    def randompars(self,labels=None,n=100):
+        """ Create random parameters for initial guesses."""
+        if labels is None:
+            labels = self.labels
+        nlabels = len(labels)
+        pars = np.zeros((n,nlabels),float)
+        for i in range(nlabels):
+            ind, = np.where(np.array(self.labels)==labels[i])
+            vmin = self.ranges[ind,0]
+            vmax = self.ranges[ind,1]
+            vrange = vmax-vmin
+            # make a small buffer
+            vmin += vrange*0.01
+            vrange *= 0.98
+            pars[:,i] = np.random.rand(n)*vrange+vmin
+
+        return pars
+                
     def __call__(self,pars,snr=None,spobs=None):
         # Get label array
-        if type(pars) is dict:
-            labels = self.mklabels(pars)
-        else:
-            labels = pars
+        labels = self.mklabels(pars)
 
         # Check that the labels are in range
         flag,badindex,rr = self.inrange(labels)
@@ -142,7 +185,11 @@ class JWSTSyn():
             error = 'parameters out of range: '
             error += '{:s}={:.4f}'.format(self.labels[badindex],labels[badindex])
             error += ' '+srr
-            raise ValueError(error)
+            if spobs is None:
+                return np.zeros(self._spobs.size)+1e30
+            else:
+                return np.zeros(spobs.size)+1e30
+            #raise ValueError(error)
 
         # Get the right model to use based on input Teff
         if labels[0] < self._ranges[0,0,1]:
@@ -177,15 +224,18 @@ class JWSTSyn():
             spmonte.mask[bd] = True
             
         return spmonte
-
+    
     def model(self,wave,*pars,**kwargs):
         """ Model function for curve_fit."""
         if self.verbose:
             print('model: ',pars)
         out = self(pars,**kwargs)
         # Only return the flux
-        return out.flux
-
+        if isinstance(out,Spec1D):
+            return out.flux
+        else:
+            return out
+        
     def jac(self,wave,*args,retmodel=False,**kwargs):
         """
         Method to return Jacobian matrix.
@@ -214,41 +264,45 @@ class JWSTSyn():
 
         """
 
+        fullargs = self.mklabels(args)
+        
         # logg relation
         #  add a dummy logg value in
-        if self.loggrelation:
-            fullargs = np.insert(args,self.loggind,0.0)
-        else:
-            fullargs = args
+        #if self.loggrelation:
+        #    fullargs = np.insert(args,self.loggind,0.0)
+        #else:
+        #    fullargs = args
 
         if self.verbose:
             print('jac: ',args)
 
         # Initialize jacobian matrix
         npix = len(wave)
-        fjac = np.zeros((npix,self.nlabels),np.float64)
+        fjac = np.zeros((npix,len(self.fitparams)),np.float64)
         
         # Loop over parameters
         pars = np.array(copy.deepcopy(args))
         f0 = self.model(wave,*pars,**kwargs)        
-        steps = np.zeros(self.nlabels)
-        for i in range(self.nlabels):
+        steps = np.zeros(len(self.fitparams))
+        for i in range(len(self.fitparams)):
+            ind, = np.where(np.array(self.labels)==self.fitparams[i])
             if self.loggrelation and i==self.loggind:
                 continue
             targs = np.array(copy.deepcopy(fullargs))
-            if i==0:
+            if ind==0:
                 step = 10.0                
             else:
                 step = 0.01
             steps[i] = step
             # Check boundaries, if above upper boundary
             #   go the opposite way
-            if targs[i]>self.ranges[i,1]:
+            if targs[ind]>self.ranges[ind,1]:
                 step *= -1
-            targs[i] += step
+            targs[ind] += step
             # Remove dummy logg if using logg relation
             if self.loggrelation:
                 targs = np.delete(targs,self.loggind)
+            #print(i,step,targs)
             f1 = self.model(wave,*targs,**kwargs)
             fjac[:,i] = (f1-f0)/steps[i]
             
@@ -315,42 +369,57 @@ class JWSTSyn():
         #else:
         #    estimates = [4500.0,2.5,-1.0,0.0]
         #    bounds = [fr.ranges[:,0],fr.ranges[:,1]]
-        estimates = [4500.0,2.0,0.0,0.0]
-        bounds = [self.ranges[:,0],self.ranges[:,1]]
-        
+        #estimates = [4500.0,2.0,0.0,0.0]
+        #bounds = [self.ranges[:,0],self.ranges[:,1]]
 
+        if fitparams is None:
+            fitparams = self.labels
+        self.fitparams = np.array(fitparams)
+        nfitparams = len(fitparams)
+        
+        bounds = [np.zeros(nfitparams),np.zeros(nfitparams)]
+        for i in range(nfitparams):
+            ind, = np.where(np.array(self.labels)==self.fitparams[i])
+            bounds[0][i] = self.ranges[ind,0]
+            bounds[1][i] = self.ranges[ind,1]
+        
         # Run set of ~100 points to get first estimate
+        ngrid = 100
         if initgrid:
             
-            if loggrelation:
-                nsample = 5
-                tstep = np.ptp(self._ranges[:,0,:])/nsample
-                tgrid = np.arange(nsample)*tstep+self._ranges[0,0,0]+tstep*0.5
-                mstep = np.ptp(self._ranges[:,2,:])/nsample
-                mgrid = np.arange(nsample)*mstep+self._ranges[0,2,0]+mstep*0.5
-                astep = np.ptp(self._ranges[:,3,:])/nsample
-                agrid = np.arange(nsample)*astep+self._ranges[0,3,0]+astep*0.5
-                tgrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,mgrid,agrid)
-                gridpars = np.vstack((tgrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
-            else:
-                nsample = 4
-                tstep = np.ptp(self._ranges[:,0,:])/nsample/1.1
-                tgrid = np.arange(nsample)*tstep+self._ranges[0,0,0]+tstep*0.5
-                gstep = np.ptp(self._ranges[:,1,:])/nsample/1.1
-                ggrid = np.arange(nsample)*gstep+self._ranges[0,1,0]+gstep*0.5            
-                mstep = np.ptp(self._ranges[:,2,:])/nsample/1.1
-                mgrid = np.arange(nsample)*mstep+self._ranges[0,2,0]+mstep*0.5
-                astep = np.ptp(self._ranges[:,3,:])/nsample/1.1
-                agrid = np.arange(nsample)*astep+self._ranges[0,3,0]+astep*0.5
-                tgrid2d,ggrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,ggrid,mgrid,agrid)
-                gridpars = np.vstack((tgrid2d.flatten(),ggrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            #if loggrelation:
+            #    nsample = 5
+            #    tstep = np.ptp(self._ranges[:,0,:])/nsample
+            #    tgrid = np.arange(nsample)*tstep+self._ranges[0,0,0]+tstep*0.5
+            #    mstep = np.ptp(self._ranges[:,2,:])/nsample
+            #    mgrid = np.arange(nsample)*mstep+self._ranges[0,2,0]+mstep*0.5
+            #    astep = np.ptp(self._ranges[:,3,:])/nsample
+            #    agrid = np.arange(nsample)*astep+self._ranges[0,3,0]+astep*0.5
+            #    tgrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,mgrid,agrid)
+            #    gridpars = np.vstack((tgrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            #else:
+            #    nsample = 4
+            #    tstep = np.ptp(self._ranges[:,0,:])/nsample/1.1
+            #    tgrid = np.arange(nsample)*tstep+self._ranges[0,0,0]+tstep*0.5
+            #    gstep = np.ptp(self._ranges[:,1,:])/nsample/1.1
+            #    ggrid = np.arange(nsample)*gstep+self._ranges[0,1,0]+gstep*0.5            
+            #    mstep = np.ptp(self._ranges[:,2,:])/nsample/1.1
+            #    mgrid = np.arange(nsample)*mstep+self._ranges[0,2,0]+mstep*0.5
+            #    astep = np.ptp(self._ranges[:,3,:])/nsample/1.1
+            #    agrid = np.arange(nsample)*astep+self._ranges[0,3,0]+astep*0.5
+            #    tgrid2d,ggrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,ggrid,mgrid,agrid)
+            #    gridpars = np.vstack((tgrid2d.flatten(),ggrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            gridpars = self.randompars(self.fitparams,ngrid)
             if verbose:
-               print('Testing an initial grid of '+str(gridpars.shape[0])+' spectra')
+               print('Testing an initial set of '+str(gridpars.shape[0])+' random parameters')
             
             # Make the models
             for i in range(gridpars.shape[0]):
-                tpars1 = {'teff':gridpars[i,0],'logg':gridpars[i,1],
-                          'mh':gridpars[i,2],'alpham':gridpars[i,3]}
+                #tpars1 = {'teff':gridpars[i,0],'logg':gridpars[i,1],
+                #          'mh':gridpars[i,2],'alpham':gridpars[i,3]}
+                tpars1 = {}
+                for j in range(len(self.fitparams)):
+                    tpars1[self.fitparams[j]] = gridpars[i,j]
                 sp1 = self(tpars1)
                 if i==0:
                     synflux = np.zeros((gridpars.shape[0],sp1.size),float)
@@ -358,23 +427,26 @@ class JWSTSyn():
             chisqarr = np.sum((synflux-spec.flux)**2/spec.err**2,axis=1)/spec.size
             bestind = np.argmin(chisqarr)
             estimates = gridpars[bestind,:]
-            estlabels = self.mklabels({'teff':estimates[0],'logg':estimates[1],
-                                       'mh':estimates[2],'alpham':estimates[3]})
+            #estlabels = self.mklabels({'teff':estimates[0],'logg':estimates[1],
+            #                           'mh':estimates[2],'alpham':estimates[3]})           
         else:
-            estlabels = np.zeros(self.nlabels)
-            estlabels[0:2] = [4200.0,1.5]
+            estimates = np.zeros(len(self.fitparams))
+            ind, = np.where(np.array(self.fitparams)=='teff')
+            if len(ind)>0:
+                estimates[ind] = 4200.0
+            ind, = np.where(np.array(self.fitparams)=='logg')
+            if len(ind)>0:
+                estimates[ind] = 1.5               
             
         if verbose:
             print('Initial estimates: ',estimates)
             
         try:
-            pars,pcov = curve_fit(self.model,spec.wave,spec.flux,p0=estlabels,
+            pars,pcov = curve_fit(self.model,spec.wave,spec.flux,p0=estimates,
                                   sigma=spec.err,bounds=bounds,jac=self.jac)
             perror = np.sqrt(np.diag(pcov))
             bestmodel = self.model(spec.wave,*pars)
             chisq = np.sum((spec.flux-bestmodel)**2/spec.err**2)/spec.size
-
-            import pdb; pdb.set_trace()
             
             # Get full parameters
             if loggrelation:
@@ -385,26 +457,23 @@ class JWSTSyn():
                 fullperror = perror
 
             if verbose:
-                printvals = [fullpars[0],fullperror[0],fullpars[1],fullperror[1],fullpars[2],fullperror[2],
-                             fullpars[3],fullperror[3]]
-                print('Best parameters: {:f}+/-{:.3g}, {:.3f}+/-{:.3g}, {:.3f}+/-{:.3g}, {:.3f}+/-{:.3g}'.format(*printvals))
-                print('Chisq: ',chisq)
+                print('Best parameters:')
+                self.printpars(fullpars,fullperror)
+                print('Chisq: {:.3f}'.format(chisq))
 
             # Construct the output dictionary
-            out1 = {'vrel':vrel,'snr':spec.snr,'pars':fullpars,'perror':fullperror,'wave':spec.wave,
-                    'flux':spec.flux,'err':spec.err,'model':bestmodel,'chisq':chisq,
-                    'loggrelation':loggrelation,'success':True}
+            out = {'vrel':vrel,'snr':spec.snr,'pars':fullpars,'perror':fullperror,'wave':spec.wave,
+                   'flux':spec.flux,'err':spec.err,'model':bestmodel,'chisq':chisq,
+                   'loggrelation':loggrelation,'success':True}
             success = True
         except:
             traceback.print_exc()
             success = False
-            out1 = {'success':False}
-
-        import pdb; pdb.set_trace()
+            out = {'success':False}
                 
         # Remove outliers and refit
         if success and outlier:
-            diff = pspec['flux']-bestmodel
+            diff = spec.flux-bestmodel
             med = np.median(diff)
             sig = dln.mad(diff)
             bd, = np.where(np.abs(diff) > 3*sig)
@@ -412,8 +481,8 @@ class JWSTSyn():
             if nbd>0:
                 if verbose:
                     print('Removing '+str(nbd)+' outliers and refitting')
-                err = pspec['err'].copy()
-                flux = pspec['flux'].copy()
+                err = spec.err.copy()
+                flux = spec.flux.copy()
                 err[bd] = 1e30
                 flux[bd] = bestmodel[bd]
                 # Save original values
@@ -421,64 +490,77 @@ class JWSTSyn():
                 estimates = pars0
                 # Run curve_fit
                 try:
-                    pars,pcov = curve_fit(fr.model,pspec['wave'],flux,p0=estimates,
-                                          sigma=err,bounds=bounds,jac=fr.jac)
+                    pars,pcov = curve_fit(self.model,spec.wave,flux,p0=estimates,
+                                          sigma=err,bounds=bounds,jac=self.jac)
                     perror = np.sqrt(np.diag(pcov))
-                    bestmodel = fr.model(pspec['wave'],*pars)
+                    bestmodel = self.model(spec.wave,*pars)
                     chisq = np.sum((flux-bestmodel)**2/err**2)/len(flux)
 
                     # Get full parameters
                     if loggrelation:
-                        fullpars = fr.getlogg(pars)
-                        fullperror = np.insert(perror,fr.loggind,0.0)
+                        fullpars = self.getlogg(pars)
+                        fullperror = np.insert(perror,self.loggind,0.0)
                     else:
                         fullpars = pars
                         fullperror = perror
 
                     if verbose:
-                        printvals = [fullpars[0],fullperror[0],fullpars[1],fullperror[1],fullpars[2],fullperror[2],
-                                     fullpars[3],fullperror[3]]
-                        print('Best parameters: {:f}+/-{:f}, {:.3f}+/-{:.3f}, {:.3f}+/-{:.3f}, {:.3f}+/-{:.3f}'.format(*printvals))
-                        print('Chisq: ',chisq)
+                        print('Best parameters:')
+                        self.printpars(fullpars,fullperror)
+                        print('Chisq: {:.3f}'.format(chisq))                        
                         
                     # Construct the output dictionary
-                    out1 = {'index':i,'vrel':vrel1,'snr':spec.snr,'pars':fullpars,'perror':fullperror,'wave':pspec['wave'],
-                            'flux':pspec['flux'],'err':pspec['err'],'mflux':flux,'merr':err,'noutlier':nbd,'model':bestmodel,
-                            'chisq':chisq,'loggrelation':loggrelation,'success':True}
+                    out = {'vrel':vrel,'snr':spec.snr,'pars':fullpars,'perror':fullperror,'wave':spec.wave,
+                           'flux':spec.flux,'err':spec.err,'mflux':flux,'merr':err,'noutlier':nbd,'model':bestmodel,
+                           'chisq':chisq,'loggrelation':loggrelation,'success':True}
                     success = True
                 except:
                     traceback.print_exc()
                     success = False
-                    out1 = {'success':False}
+                    out = {'success':False}
 
-
-        # Create output table
-        dt = [('index',int),('vrel',float),('snr',float),('pars',float,4),('perror',float,4),('chisq',float),('success',bool)]
-        tab = np.zeros(len(out),dtype=np.dtype(dt))
-        for i,o in enumerate(out):
-            if o['success']:
-                tab['index'][i] = o['index']
-                tab['vrel'][i] = o['vrel']
-                tab['snr'][i] = o['snr']                        
-                tab['pars'][i] = o['pars']	 
-                tab['perror'][i] = o['perror']
-                tab['chisq'][i] = o['chisq']
-                tab['success'][i] = o['success']
-        tab = Table(tab)
-
-        
-        return out,tab
-
-
+        return out
 
             
     
-def monte():
+def monte(nmonte=50,snr=50,initgrid=True,verbose=True):
     """ Simple Monte Carlo test to recover elemental abundances."""
 
+    # Initialize JWST spectral simulation object
+    jw = JWSTSyn()
+    fitparams = ['teff','logg','mh','cm']
+    params = {'teff':4000.0,'logg':2.0,'mh':0.0,'cm':0.1}
+    labels = list(tuple(params.keys()))
+    truepars = [params['teff'],params['logg'],params['mh'],params['cm']]
+    nparams = len(fitparams)
+    dt = [('ind',int),('snr',float),('truepars',float,nparams),('pars',float,nparams),
+          ('perror',float,nparams),('chisq',float)]
+    tab = np.zeros(nmonte,dtype=np.dtype(dt))
+    for i in range(nmonte):
+        print('---- Mock {:d} ----'.format(i+1))
+        sp = jw(params,snr=snr) 
+        out = jw.fit(sp,fitparams=fitparams,initgrid=initgrid,verbose=verbose)
+        tab['ind'][i] = i+1
+        tab['snr'][i] = out['snr']
+        tab['truepars'][i] = truepars
+        tab['pars'][i] = out['pars']
+        tab['perror'][i] = out['perror']
+        tab['chisq'][i] = out['chisq']
 
-    
-    
+    # Figure out the bias and rms for each parameter
+    dt = [('label',str,10),('nmonte',int),('value',float),('bias',float),('rms',float)]
+    res = Table(np.zeros(nparams,dtype=np.dtype(dt)))
+    for i in range(nparams):
+        resid = tab['pars'][:,i]-truepars[i]
+        res['label'][i] = labels[i]
+        res['nmonte'][i] = nmonte
+        res['value'][i] = truepars[i]
+        res['bias'][i] = np.median(resid)
+        res['rms'][i] = np.sqrt(np.mean(resid**2))
+        sdata = res['label'][i],res['value'][i],res['bias'][i],res['rms'][i]
+        print('{:<7s}: value={:<10.2f} bias={:<10.3f} rms={:<10.3f}'.format(*sdata))
+        
+    return res
     
 
 def test():

@@ -231,6 +231,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     # Loop over the stars
     slist = {}
     vlist = {}
+    jlist = {}
     for i in range(nstars):
         starid = starids[i]
         print(i+1,starid)
@@ -249,7 +250,8 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
         # Run doppler with joint on visits
         if len(vind)>1:
             jout = doppler_joint(vfiles,clobber=clobber)
-        
+            jlist[starid] = jout
+            
         # Stack file
         sind, = np.where(starids==starid)
         sfiles = stackfiles[sind[0]]
@@ -259,6 +261,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
             estimates = {'TEFF':sout['teff'][0],'LOGG':sout['logg'][0],'FE_H':sout['feh'][0],'RV':sout['vrel'][0]}
             sout_payne = doppler_stack(sfiles,clobber=clobber,payne=True,estimates=estimates)        
 
+            
     # Create visit catalog
     dt = [('starid',str,50),('visitfile',str,200),('id',str,50),('vhelio',float),('vrel',float),('vrelerr',float),
           ('teff',float),('tefferr',float),('logg',float),('loggerr',float),('feh',float),('feherr',float),
@@ -336,7 +339,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
 
 
 def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0,
-              errbar=1,grid='jwstgiant4.dat',save=False,plotsdir=None,plots=True):
+              errbar=1,grid='jwstgiant5.dat',save=False,plotsdir=None,plots=True):
     """ 
     Run FERRE on list of spectra
 
@@ -435,7 +438,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         return None,None
         
     gridfile = '/Users/nidever/synspec/winter2017/jwst/'+grid
-    ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
+    ferre = '/Users/nidever/projects/ferre/bin/ferre'
 
     # Set up temporary directory
     tmpdir = tempfile.mkdtemp(prefix='ferre')
@@ -596,10 +599,9 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         #out = subprocess.check_output([ferre])
     except:
         fout.close()        
-        #traceback.print_exc()
-        pass
+        traceback.print_exc()
+        #pass
 
-    
     # Read the output
     olines = dln.readlines('ferre.opf')
     ids = np.char.array([o.split()[0] for o in olines])

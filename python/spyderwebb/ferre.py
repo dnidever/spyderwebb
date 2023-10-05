@@ -91,7 +91,7 @@ def gridinfo(filename):
     return out
 
 
-def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant4.dat',
+def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
            griddir=None,ferresrc=None):
     """
     Interpolate in the FERRE grid.
@@ -130,7 +130,7 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant4.dat',
         griddir = '/Users/nidever/synspec/winter2017/jwst/'
     gridfile = griddir+grid
     if ferresrc is None:
-        ferresrc = '/Users/nidever/projects/ferre/bin/ferre.x'
+        ferresrc = '/Users/nidever/projects/ferre/bin/ferre'
     info = gridinfo(gridfile)
 
     # Number of objects
