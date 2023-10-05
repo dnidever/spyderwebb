@@ -548,6 +548,8 @@ def monte(nmonte=50,snr=50,initgrid=True,verbose=True):
         tab['chisq'][i] = out['chisq']
 
     # Figure out the bias and rms for each parameter
+    print('\nFinal Monte Carlos Results')
+    print('--------------------------')
     dt = [('label',str,10),('nmonte',int),('value',float),('bias',float),('rms',float)]
     res = Table(np.zeros(nparams,dtype=np.dtype(dt)))
     for i in range(nparams):
