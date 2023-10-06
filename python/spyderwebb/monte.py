@@ -523,15 +523,18 @@ class JWSTSyn():
 
             
     
-def monte(nmonte=50,snr=50,initgrid=True,verbose=True):
+def monte(params=None,nmonte=50,snr=50,initgrid=True,verbose=True):
     """ Simple Monte Carlo test to recover elemental abundances."""
 
     # Initialize JWST spectral simulation object
     jw = JWSTSyn()
-    fitparams = ['teff','logg','mh','cm']
-    params = {'teff':4000.0,'logg':2.0,'mh':0.0,'cm':0.1}
+
+    if params is None:
+        params = {'teff':4000.0,'logg':2.0,'mh':0.0,'cm':0.1}
+    
+    fitparams = list(tuple(params.keys()))
     labels = list(tuple(params.keys()))
-    truepars = [params['teff'],params['logg'],params['mh'],params['cm']]
+    truepars = [params[k] for k in params.keys()]
     nparams = len(fitparams)
     dt = [('ind',int),('snr',float),('truepars',float,nparams),('pars',float,nparams),
           ('perror',float,nparams),('chisq',float)]
