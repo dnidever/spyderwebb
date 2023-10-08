@@ -9,15 +9,14 @@ from theborg.emulator import Emulator
 from doppler.spec1d import Spec1D
 from . import utils
 
-class JWSTSyn():
+cspeed = 2.99792458e5  # speed of light in km/s
 
-    # model JWST nirspec spectra
+class JWSTANNModel():
+
+    # Model JWST nirspec spectra using ANN model
     
     def __init__(self,spobs=None,loggrelation=False,verbose=False):
         # Load the ANN models
-        #datadir = '/Users/nidever/synspec/nodegrid/'
-        #emwarm = Emulator.read(datadir+'grid7/grid7_annmodel_300neurons_0.0001rate_20000steps.pkl')
-        #emcool = Emulator.read(datadir+'grid8/grid8_annmodel_300neurons_0.0001rate_20000steps.pkl')
         emwarm = Emulator.read(utils.datadir()+'ann_28pars_warm.pkl')
         emcool = Emulator.read(utils.datadir()+'ann_28pars_cool.pkl')
         self._models = [emcool,emwarm]
@@ -36,7 +35,7 @@ class JWSTSyn():
         for i in np.arange(1,self.nlabels):
             self.ranges[i,:] = [np.max(self._ranges[:,i,0]),np.min(self._ranges[:,i,1])]
         
-        # alpha element indexes
+        # Alpha element index
         alphaindex = []
         for i,l in enumerate(self.labels):
             if l in ['om','cam','mgm','tim','sm','sim']:
@@ -44,22 +43,11 @@ class JWSTSyn():
         self._alphaindex = np.array(alphaindex)
         
         # Input observed spectrum information
-        if spobs is not None:
-            self._spobs = spobs
-        # Default observed spectrum            
-        else:
-            wobs_coef = np.array([-1.51930967e-09, -5.46761333e-06,  2.39684716e+00,  8.99994494e+03])            
-            # 3847 observed pixels
-            npix_obs = 3847
-            wobs = np.polyval(wobs_coef,np.arange(npix_obs))
-            spobs = Spec1D(np.zeros(npix_obs),wave=wobs,err=np.ones(npix_obs),
-                           lsfpars=np.array([ 1.05094118e+00, -3.37514635e-06]),
-                           lsftype='Gaussian',lsfxtype='wave')        
-            self._spobs = spobs
-
-        # Synthetic wavelengths
-        npix_syn = 22001
-        self._wsyn = np.arange(npix_syn)*0.5+9000
+        self._spobs = spobs
+            
+        # ANN model wavelengths
+        npix_model = 22001
+        self._dispersion = np.arange(npix_model)*0.5+9000
 
         # Get logg label
         loggind, = np.where(np.char.array(self.labels).lower()=='logg')
@@ -67,7 +55,7 @@ class JWSTSyn():
             raise ValueError('No logg label')
         self.loggind = loggind[0]
         
-        # Load the ANN model
+        # Load the ANN model for logg-relationship
         logg_model = Emulator.load(utils.datadir()+'apogeedr17_rgb_logg_ann.npz')
         self.logg_model = logg_model
         
@@ -208,29 +196,33 @@ class JWSTSyn():
             modelindex = 0
         else:
             modelindex = 1
-
-        # Wavelengths to use
-        wave = self._wsyn
             
-        # Get the synthetic spectrum
+        # Get the ANN model spectrum
         flux = self._models[modelindex](labels)
-
+        wave = self._dispersion
+        
         # Doppler shift
         if vrel is not None and vrel != 0.0:
-            redwave = wave*(1+vrel/cspeed)
+            redwave = wave*(1+vrel/cspeed)  # redshift the wavelengths
             orig_flux = flux.copy()
-            flux = dln.interp(redwave,flux,wave)
-        
-        # Make the synthetic Spec1D object
+            flux = dln.interp(redwave,flux,wave,extrapolate=False,fill_value=np.nan)
+            flux[~np.isfinite(flux)] = 1.0
+                
+        # Make the model Spec1D object
         spsyn = Spec1D(flux,wave=wave)
         # Say it is normalized
         spsyn.normalized = True
         spsyn._cont = np.ones(spsyn.flux.shape)        
-        # Convolve to JWST resolution and wavelength
+        # Convolve to JWST observed resolution and wavelength
         if spobs is None:
             spmonte = spsyn.prepare(self._spobs)
+            spmonte.continuum_func = self._spobs.continuum_func
         else:
             spmonte = spsyn.prepare(spobs)
+            spmonte.continuum_func = spobs.continuum_func
+        # Now normalize if requested
+        if normalize:
+            spmonte.normalize()
         # Add labels to spectrum object
         spmonte.labels = labels
         # Add noise
@@ -386,11 +378,6 @@ class JWSTSyn():
         nfitparams = len(fitparams)
 
         # Make bounds
-        #bounds = [np.zeros(nfitparams),np.zeros(nfitparams)]
-        #for i in range(nfitparams):
-        #    ind, = np.where(np.array(self.labels)==self.fitparams[i])
-        #    bounds[0][i] = self.ranges[ind,0]
-        #    bounds[1][i] = self.ranges[ind,1]
         bounds = self.mkbounds(fitparams)
         
         # Run set of ~100 points to get first estimate
@@ -526,82 +513,3 @@ class JWSTSyn():
                     out = {'success':False}
 
         return out
-
-            
-    
-def monte(params=None,nmonte=50,snr=50,initgrid=True,verbose=True):
-    """ Simple Monte Carlo test to recover elemental abundances."""
-
-    # Initialize JWST spectral simulation object
-    jw = JWSTSyn()
-
-    if params is None:
-        params = {'teff':4000.0,'logg':2.0,'mh':0.0,'cm':0.1}
-
-    fitparams = list(tuple(params.keys()))
-    labels = list(tuple(params.keys()))
-    truepars = [params[k] for k in params.keys()]
-    nparams = len(fitparams)
-    dt = [('ind',int),('snr',float),('truepars',float,nparams),('pars',float,nparams),
-          ('perror',float,nparams),('chisq',float)]
-    tab = np.zeros(nmonte,dtype=np.dtype(dt))
-    for i in range(nmonte):
-        print('---- Mock {:d} ----'.format(i+1))
-        sp = jw(params,snr=snr) 
-        out = jw.fit(sp,fitparams=fitparams,initgrid=initgrid,verbose=verbose)
-        tab['ind'][i] = i+1
-        tab['snr'][i] = out['snr']
-        tab['truepars'][i] = truepars
-        tab['pars'][i] = out['pars']
-        tab['perror'][i] = out['perror']
-        tab['chisq'][i] = out['chisq']
-
-    # Figure out the bias and rms for each parameter
-    print('\nFinal Monte Carlos Results')
-    print('--------------------------')
-    dt = [('label',str,10),('nmonte',int),('value',float),('bias',float),('rms',float)]
-    res = Table(np.zeros(nparams,dtype=np.dtype(dt)))
-    for i in range(nparams):
-        resid = tab['pars'][:,i]-truepars[i]
-        res['label'][i] = labels[i]
-        res['nmonte'][i] = nmonte
-        res['value'][i] = truepars[i]
-        res['bias'][i] = np.median(resid)
-        res['rms'][i] = np.sqrt(np.mean(resid**2))
-        sdata = res['label'][i],res['value'][i],res['bias'][i],res['rms'][i]
-        print('{:<7s}: value={:<10.2f} bias={:<10.3f} rms={:<10.3f}'.format(*sdata))
-        
-    return res
-    
-
-def test():
-
-    # Simulate fake JWST data with ANN model
-    em = Emulator.read('/Users/nidever/synspec/nodegrid/grid8/grid8_annmodel_300neurons_0.0001rate_20000steps.pkl')
-    npix_syn = 22001
-    wsyn = np.arange(npix_syn)*0.5+9000
-
-    # need to convolve with the JWST LSF
-
-    wobs_coef = np.array([-1.51930967e-09, -5.46761333e-06,  2.39684716e+00,  8.99994494e+03])
-    # 3847 pixels
-    npix_obs = 3847
-    wobs = np.polyval(wobs_coef,np.arange(npix_obs))
-    
-    spobs = Spec1D(np.zeros(npix_obs),wave=wobs,err=np.ones(npix_obs),
-                   lsfpars=np.array([ 1.05094118e+00, -3.37514635e-06]),
-                   lsftype='Gaussian',lsfxtype='wave')
-
-    pars = np.array([4000.0,2.0,0.0])
-    pars = np.concatenate((pars,np.zeros(25)))
-    spsyn = Spec1D(em(pars),wave=wsyn,err=np.ones(npix_syn))
-    spmonte = spsyn.prepare(spobs)
-
-    # deal with any NaNs
-    bd, = np.where(~np.isfinite(spmonte.flux))
-    if len(bd)>0:
-        spmonte.flux[bd] = 1.0
-        spmonte.err[bd] = 1e30
-        spmonte.mask[bd] = True
-
-        
