@@ -96,6 +96,10 @@ class JWSTANNModel():
 
         return labels
 
+    def meanlabels(self):
+        """ Return mean labels."""
+        return np.mean(self.ranges,axis=1)
+    
     def mkbounds(self,params):
         """ Make bounds for input parameter names."""
         bounds = [np.zeros(len(params)),np.zeros(len(params))]
@@ -173,8 +177,53 @@ class JWSTANNModel():
             pars[:,i] = np.random.rand(n)*vrange+vmin
 
         return pars
-                
-    def __call__(self,pars,snr=None,spobs=None,vrel=None):
+
+    def fiducialspec(self):
+        """ Default JWST resolution and wavelength spectrum."""
+        # Default observed spectrum            
+        wobs_coef = np.array([-1.51930967e-09, -5.46761333e-06,  2.39684716e+00,  8.99994494e+03])            
+        # 3847 observed pixels
+        npix_obs = 3847
+        wobs = np.polyval(wobs_coef,np.arange(npix_obs))
+        spobs = Spec1D(np.zeros(npix_obs),wave=wobs,err=np.ones(npix_obs),
+                       lsfpars=np.array([ 1.05094118e+00, -3.37514635e-06]),
+                       lsftype='Gaussian',lsfxtype='wave')        
+        return spobs
+    
+    def __call__(self,pars=None,spobs=None,snr=None,vrel=None,normalize=False,
+                 fiducial=False):
+        """
+        Returns JWST model spectrum.
+
+        Parameters
+        ----------
+        pars : list or array
+           Parameters for the labels.
+        spobs : Spec1D, optional
+           Observed spectrum to model, using the resolution and wavelength.
+        snr : float, optional
+           Add random noise to the spectrum at the "snr" level.
+        vrel : float, optional
+           Doppler shift the spectrum by vrel (km/s).
+        normalize : bool, optional
+           Perform continuum normalization on the spectrum.
+        fiducial : bool, optional
+           Use fiducial JWST resolution and wavelength values.
+
+        Returns
+        -------
+        spec : Spec1D
+           JWST model spectrum.
+
+        Example
+        -------
+
+        spec = jw(pars)
+
+        """
+        # If no pars input, use mean values
+        if pars is None:
+            pars = self.meanlabels()
         # Get label array
         labels = self.mklabels(pars)
 
@@ -213,13 +262,19 @@ class JWSTANNModel():
         # Say it is normalized
         spsyn.normalized = True
         spsyn._cont = np.ones(spsyn.flux.shape)        
-        # Convolve to JWST observed resolution and wavelength
-        if spobs is None:
-            spmonte = spsyn.prepare(self._spobs)
-            spmonte.continuum_func = self._spobs.continuum_func
+        # Convolve to observed resolution and wavelength
+        if fiducial and spobs is None:   # use fiducial values
+            spobs = self.fiducialspec()
+        if spobs is not None or self._spobs is not None:
+            if spobs is None:
+                spmonte = spsyn.prepare(self._spobs)
+                spmonte.continuum_func = self._spobs.continuum_func
+            else:
+                spmonte = spsyn.prepare(spobs)
+                spmonte.continuum_func = spobs.continuum_func
+        # No observed spectrum input
         else:
-            spmonte = spsyn.prepare(spobs)
-            spmonte.continuum_func = spobs.continuum_func
+            spmonte = spsyn
         # Now normalize if requested
         if normalize:
             spmonte.normalize()
