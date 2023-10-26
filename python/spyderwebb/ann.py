@@ -19,7 +19,8 @@ class JWSTANNModel():
         # Load the ANN models
         emwarm = Emulator.read(utils.datadir()+'ann_28pars_warm.pkl')
         emcool = Emulator.read(utils.datadir()+'ann_28pars_cool.pkl')
-        self._models = [emcool,emwarm]
+        emwarm_mp = Emulator.read(utils.datadir()+'ann_28pars_warm_metalpoor.pkl')
+        self._models = [emcool,emwarm,emwarm_mp]
         self.nmodels = len(self._models)
         self.labels = self._models[0].label_names
         self.nlabels = len(self.labels)
@@ -99,6 +100,17 @@ class JWSTANNModel():
     def meanlabels(self):
         """ Return mean labels."""
         return np.mean(self.ranges,axis=1)
+
+    def get_best_model(self,labels):
+        """ This returns the first ANN model that has the right range."""
+        for m in range(self.nmodels):
+            ranges = self._ranges[m,:,:]
+            inside = True
+            for i in range(3):
+                inside &= (labels[i]>=ranges[i,0]) & (labels[i]<=ranges[i,1])
+            if inside:
+                return m
+        return None
     
     def mkbounds(self,params):
         """ Make bounds for input parameter names."""
@@ -116,15 +128,10 @@ class JWSTANNModel():
     def inrange(self,pars):
         """ Check that the parameters are in range."""
         labels = self.mklabels(pars)
-        # Check temperature
-        rr = [self._ranges[0,0,0],self._ranges[1,0,1]]
-        if labels[0]<rr[0] or labels[0]>rr[1]:
-            return False,0,rr
-        # Get the right model to use based on input Teff
-        if labels[0] < self._ranges[0,0,1]:
-            modelindex = 0
-        else:
-            modelindex = 1
+        # Get the right model to use based on input Teff/logg/feh
+        modelindex = self.get_best_model(labels)
+        if modelindex is None:
+            return False,0,[self.ranges[0,0],self.ranges[0,1]]
         # Check other ranges
         for i in np.arange(1,self.nlabels):
             rr = [self._ranges[modelindex,i,0],self._ranges[modelindex,i,1]]
@@ -240,11 +247,8 @@ class JWSTANNModel():
                 return np.zeros(spobs.size)+1e30
             #raise ValueError(error)
 
-        # Get the right model to use based on input Teff
-        if labels[0] < self._ranges[0,0,1]:
-            modelindex = 0
-        else:
-            modelindex = 1
+        # Get the right model to use based on input Teff/logg/feh
+        modelindex = self.get_best_model(labels)
             
         # Get the ANN model spectrum
         flux = self._models[modelindex](labels)
