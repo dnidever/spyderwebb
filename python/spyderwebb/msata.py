@@ -3,6 +3,7 @@ import numpy as np
 from astropy.io import fits
 from astropy.table import Table
 from dlnpyutils import utils as dln,coords
+from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 import matplotlib
 
@@ -322,18 +323,116 @@ class Grid():
             hline = self.hline(i-(nyline//2))
             hline.plot(xr,yr)
         
-        
-def model_background():
+
+
+
+def model_background(im,verbose=True):
     """ Model a NIRSPEC MSATA image with just the background."""
 
-    # represent each bar as a line with a certain thickness
+    med = np.nanmedian(im)
+    sig = dln.mad(im)
+    ny,nx = im.shape
+    xcen = nx//2
+    ycen = ny//2
+    xr = [0,nx]
+    yr = [0,ny]
+    
+    mask = (np.abs(im-med) < 3*sig) & np.isfinite(im)
+    err = np.sqrt(im)
+    err[~np.isfinite(err)] = np.nanmedian(err)
 
-    # oversample each pixel by 10 x 10 
+    
+    def msatafitter(x,*pars):
+        if verbose:
+            print(pars)
+        amp = pars[0]
+        xcen = pars[1]
+        ycen = pars[2]
+        if len(pars)>3:
+            theta = pars[3]
+        else:
+            theta = 0.0
+        if len(pars)>4:
+            barxsep = pars[4]
+            barysep = pars[5]
+            barwidth = pars[6]
+        grid = Grid(xcen,ycen,theta=theta)
+
+        if len(pars)>4:
+            grid.barxsep = barxsep
+            grid.barysep = barysep
+            grid.barwidth = barwidth
+        model = amp*(1-grid(xr,yr))
+        return model[mask]
+
+    def msatajac(x,*pars):
+        jac = np.zeros((len(x),len(pars)),float)
+        f0 = msatafitter(x,*pars)
+        for i in range(len(pars)):
+            tpars = np.array(pars).copy()
+            dx = tpars[i]*0.20
+            if dx==0:
+                dx = 0.01
+            tpars[i] += dx
+            f1 = msatafitter(x,*tpars)
+            jac[:,i] = (f1-f0)/dx
+        return jac
+
+    # First only fit [amp, xcen, ycen, theta]
+    estimates = [med, xcen, ycen, 0.0]
+    print('estimates = ',estimates)
+    bounds = [np.zeros(len(estimates))-np.inf,np.zeros(len(estimates))+np.inf]
+    bounds[0][0] = 0
+    bounds[0][1] = xcen-5
+    bounds[1][1] = xcen+5
+    bounds[0][2] = ycen-5
+    bounds[1][2] = ycen+5
+    pars1,pcov1 = curve_fit(msatafitter,im[mask]*0,im[mask],sigma=err[mask],p0=estimates,bounds=bounds,jac=msatajac)
+    print('pars = ',pars1)
+
+    grid = Grid(pars1[1],pars1[2],theta=0.0)
+    bestmodel = pars1[0]*(1-grid(xr,yr))
+    chisq = np.sum((im[mask]-bestmodel[mask])**2 / err[mask]**2)/np.sum(mask)
+    print('chisq = ',chisq)
     
     import pdb; pdb.set_trace()
-
-
+     
+    # [amp, xce, ycen, theta, barxsep, barysep, barwidth]
+    estimates = [pars1[0], pars1[1], pars1[2], pars1[3], 2.7, 5.3, 0.7]
+    bounds = [np.zeros(len(estimates))-np.inf,np.zeros(len(estimates))+np.inf]
+    bounds[0][0] = 0
+    bounds[0][1] = estimates[1]-3
+    bounds[1][1] = estimates[1]+3
+    bounds[0][2] = estimates[2]-3
+    bounds[1][2] = estimates[2]+3
+    bounds[0][4] = 2.5    # barxsep
+    bounds[1][4] = 3.0
+    bounds[0][5] = 5.0    # barysep
+    bounds[1][5] = 5.6
+    bounds[0][6] = 0.5    # barwidth
+    bounds[1][6] = 0.9
     
+    pars,pcov = curve_fit(msatafitter,im[mask]*0,im[mask],sigma=err[mask],p0=estimates,bounds=bounds,jac=msatajac)
+    
+    print('best pars: ',pars)
+    grid = Grid(pars[1],pars[2],theta=pars[3])
+    grid.barxsep = pars[4]
+    grid.barysep = pars[5]
+    grid.barwidth = pars[6]
+    bestmodel = pars[0]*(1-grid(xr,yr))
+    chisq = np.sum((im[mask]-bestmodel[mask])**2 / err[mask]**2)/np.sum(mask)    
+    print('chisq = ',chisq)
+    #pl.display((im2-bestmodel)*mask,vmin=-5,vmax=5)
+
+    #best pars:  [ 4.62035985 19.97713692 19.99999571  0.18208773  2.99696345  5.5999840  0.5006771 ]
+    #chisq =  1.7596362969096417
+
+
+    import pdb; pdb.set_trace()
+
+    return pars,bestmodel,chisq
+
+
 def model_star():
     """ Model a NIRSPEC MSATA image with a star and background."""
     
