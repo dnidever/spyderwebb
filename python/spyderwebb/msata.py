@@ -186,10 +186,10 @@ class Box():
         self.theta = theta
         # theta: positive rotates counter-clockwise
         
-    def __call__(self,xr=None,yr=None):
+    def __call__(self,xr=None,yr=None,osamp=20,resample=True):
         """ Return the model."""
-        pass
-
+        return self.coverage(xr=xr,yr=yr,osamp=osamp,resample=resample)
+        
     def __repr__(self):
         prefix = self.__class__.__name__ + '('
         body = 'Xc={:.2f},Yc={:.2f},Width={:.2f}'.format(self.xcen,self.ycen,self.width)
@@ -517,7 +517,118 @@ def check_shutter_working(quad,im1,im2):
     #import pdb; pdb.set_trace()
 
     return quad
-            
+
+
+def fit_shutter(im,cen,verbose=True):
+    """ Determine shutter parameters by fitting image."""
+
+    box = Box(cen[0],cen[1])
+    xrr = box.xrange
+    yrr = box.yrange
+    xlo = int(np.floor(xrr[0]))
+    xhi = int(np.ceil(xrr[1]))
+    ylo = int(np.floor(yrr[0]))
+    yhi = int(np.ceil(yrr[1]))    
+    sim = im[ylo:yhi,xlo:xhi]
+    serr = np.sqrt(np.maximum(sim,0))
+
+    med = np.nanmedian(sim)
+    mask = np.isfinite(sim)
+    
+    xr = [xlo,xhi]
+    yr = [ylo,yhi]
+    if verbose:
+        print('xr = ',xr)
+        print('yr = ',yr)    
+    
+    bim = box.coverage(xr,yr,osamp=20) * 190
+
+    
+    def boxfitter(x,*pars):
+        if verbose:
+            print(pars)
+        amp = pars[0]
+        xcen = pars[1]
+        ycen = pars[2]
+        if len(pars)>3:
+            theta = pars[3]
+        else:
+            theta = 0.0
+        if len(pars)>4:
+            width = pars[4]
+            height = pars[5]
+        b = Box(xcen,ycen,theta=theta)
+
+        if len(pars)>4:
+            b.width = width
+            b.height = height
+        model = amp*b(xr,yr)
+        return model[mask]
+
+    def boxjac(x,*pars):
+        jac = np.zeros((len(x),len(pars)),float)
+        f0 = boxfitter(x,*pars)
+        for i in range(len(pars)):
+            tpars = np.array(pars).copy()
+            if i==0:
+                dx = tpars[i]*0.05
+            else:
+                dx = 0.05
+            if dx==0:
+                dx = 0.01
+            tpars[i] += dx
+            f1 = boxfitter(x,*tpars)
+            jac[:,i] = (f1-f0)/dx
+        return jac
+
+    # First only fit [amp, xcen, ycen, theta]
+    estimates = [med, box.xcen, box.ycen] #, 0.0]
+    if verbose:
+        print('estimates = ',estimates)
+    bounds = [np.zeros(len(estimates))-np.inf,np.zeros(len(estimates))+np.inf]
+    bounds[0][0] = 0
+    bounds[0][1] = estimates[1]-0.5
+    bounds[1][1] = estimates[1]+0.5
+    bounds[0][2] = estimates[2]-1
+    bounds[1][2] = estimates[2]+1
+    #bounds[0][3] = -5
+    #bounds[1][3] = 5    
+    pars1,pcov1 = curve_fit(boxfitter,sim[mask]*0,sim[mask],sigma=serr[mask],
+                          p0=estimates,bounds=bounds,jac=boxjac)
+    if verbose:
+        print('pars = ',pars1)
+    bbox = Box(pars1[1],pars1[2])
+    if len(pars1)>3:
+        bbox.theta = pars1[3]
+    bim = pars1[0]*bbox(xr,yr)
+
+    return pars1,bbox,bim,sim
+
+
+    # Next also fit width/height [amp, xcen, ycen, theta]
+    estimates = [pars1[0],pars1[1], pars1[2], pars1[3], box.width, box.height]
+    print('estimates = ',estimates)
+    bounds = [np.zeros(len(estimates))-np.inf,np.zeros(len(estimates))+np.inf]
+    bounds[0][0] = 0
+    bounds[0][1] = estimates[1]-0.5
+    bounds[1][1] = estimates[1]+0.5
+    bounds[0][2] = estimates[2]-0.55
+    bounds[1][2] = estimates[2]+0.55
+    bounds[0][3] = -5
+    bounds[1][3] = 5
+    bounds[0][4] = estimates[4]-0.3
+    bounds[1][4] = estimates[4]+0.3
+    bounds[0][5] = estimates[5]-0.4
+    bounds[1][5] = estimates[5]+0.4        
+    pars,pcov = curve_fit(boxfitter,sim[mask]*0,sim[mask],sigma=serr[mask],
+                          p0=estimates,bounds=bounds,jac=boxjac)
+    print('pars = ',pars)
+    bbox = Box(pars[1],pars[2],theta=pars[3],width=pars[4],height=pars[5])
+    bim = pars[0]*bbox(xr,yr)
+    
+    return pars,bbox,bim
+
+
 # The positions of all the shutters
 def make_shutter_table():
 
