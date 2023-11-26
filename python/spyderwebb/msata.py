@@ -174,7 +174,120 @@ class Line():
             plt.plot([self.x,self.x],yr,c=c)
         else:
             plt.plot(x,self(x),c=c)
+
+
+class Box():
+
+    def __init__(self,xcen=0,ycen=0,width=2.0,height=4.7,theta=0.0):
+        self.xcen = xcen
+        self.ycen = ycen
+        self.width = width
+        self.height = height
+        self.theta = theta
+        # theta: positive rotates counter-clockwise
         
+    def __call__(self,xr=None,yr=None):
+        """ Return the model."""
+        pass
+
+    def __repr__(self):
+        prefix = self.__class__.__name__ + '('
+        body = 'Xc={:.2f},Yc={:.2f},Width={:.2f}'.format(self.xcen,self.ycen,self.width)
+        body += ',Height={:.2f},Theta={:.2f}'.format(self.height,self.theta)
+        out = ''.join([prefix, body, ')']) +'\n'
+        return out
+
+    @property
+    def center(self):
+        return self.xcen,self.ycen
+
+    @property
+    def x(self):
+        """ Return polygon X-values"""        
+        return self.polygon()['x']
+
+    @property
+    def y(self):
+        """ Return polygon Y-values"""
+        return self.polygon()['y']    
+    
+    @property
+    def xrange(self):
+        """ Return the X-range."""
+        xy = self.polygon()
+        return np.min(xy['x']),np.max(xy['x'])
+
+    @property
+    def yrange(self):
+        """ Return the Y-range."""
+        xy = self.polygon()
+        return np.min(xy['y']),np.max(xy['y'])    
+    
+    def polygon(self):
+        """ Return the points of the polygon."""
+        xy = np.zeros(4,dtype=np.dtype([('x',float),('y',float)]))  
+        if self.theta==0:
+            xy['x'] = np.array([-1,1,1,-1])*0.5*self.width+self.xcen
+            xy['y'] = np.array([-1,-1,1,1])*0.5*self.height+self.ycen
+        else:
+            x0 = np.array([-1,1,1,-1])*0.5*self.width
+            y0 = np.array([-1,-1,1,1])*0.5*self.height
+            sth = np.sin(np.deg2rad(self.theta))
+            cth = np.cos(np.deg2rad(self.theta))            
+            #rot = np.array([[cth,-sth],
+            #                [sth,cth]])
+            x = x0*cth - y0*sth
+            y = x0*sth + y0*cth
+            xy['x'] = x + self.xcen
+            xy['y'] = y + self.ycen
+        return xy
+
+    def coverage(self,xr=None,yr=None,osamp=1,resample=True):
+        """ Return the covering fraction of a grid defined by xr/yr ranges."""
+        if xr is None:
+            xr = self.xrange
+        if yr is None:
+            yr = self.yrange
+        nxpix = xr[1]-xr[0]
+        nypix = yr[1]-yr[0]
+        x = np.arange(nxpix*osamp)/osamp + xr[0]
+        y = np.arange(nypix*osamp)/osamp + yr[0]
+        im = np.zeros((nypix*osamp,nxpix*osamp),float)
+        xx,yy = np.meshgrid(x,y)
+        xypoly = self.polygon()
+        # Not in range
+        xmin,xmax = np.min(xypoly['x']),np.max(xypoly['x'])
+        ymin,ymax = np.min(xypoly['y']),np.max(xypoly['y'])
+        if xmax<xr[0] or xmin>xr[1] or ymax<yr[0] or ymin>yr[1]:
+            return im
+        # Only run roi_cut on the relevant portion of the grid
+        _,x0 = dln.closest(x,xmin-0.1)
+        _,x1 = dln.closest(x,xmax+0.1)
+        _,y0 = dln.closest(y,ymin-0.1)
+        _,y1 = dln.closest(y,ymax+0.1)        
+        slc = (slice(y0,y1+1),slice(x0,x1+1))
+        ind,cutind = dln.roi_cut(xypoly['x'],xypoly['y'],xx[slc].ravel(),yy[slc].ravel())
+        if len(cutind)>0:
+            cutind2 = np.unravel_index(cutind,xx[slc].shape)
+            imslc = im[slc]
+            imslc[cutind2[0],cutind2[1]] = 1
+            im[slc] = imslc
+
+        # Rebin
+        if osamp > 1 and resample:
+            im = dln.rebin(im,binsize=[osamp,osamp])
+            
+        return im
+    
+    def plot(self,c='r',filled=False):
+        xy = self.polygon()
+        if filled:
+            plt.fill(np.append(xy['x'],xy['x'][0]),
+                     np.append(xy['y'],xy['y'][0]),c=c)
+        else:
+            plt.plot(np.append(xy['x'],xy['x'][0]),
+                     np.append(xy['y'],xy['y'][0]),c=c)
+    
             
 class Grid():
 
@@ -1033,7 +1146,10 @@ def make_shutter_table():
     quad3 = Table.read('nirspec_msata_quad3.fits')
     quad4 = Table.read('nirspec_msata_quad4.fits')    
     quad = vstack((quad1,quad2,quad3,quad4))
-    quad.write('nirspec_msata_quadrants.fits')
+    quad.write('nirspec_msa_quadrants.fits')
+
+    # not fit each shutter better using oversampled modeling
+    # us the new Box() class
     
 
 def model_background(im,verbose=True):
