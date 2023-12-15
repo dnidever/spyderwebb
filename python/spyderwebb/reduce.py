@@ -614,6 +614,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
             #combsp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
 
             # Save a plot
+            backend = matplotlib.rcParams['backend']
             matplotlib.use('Agg')
             fig = plt.figure(figsize=(12,7))
             plt.clf()
@@ -630,8 +631,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
             #plt.ylabel('Flux')
             #plt.ylim(-medflux/3.,1.8*medflux)            
             #plt.savefig(stackplotdir+'/spStack-'+srcname+'_rate_flux.png',bbox_inches='tight')
-            matplotlib.use('MacOSX')
-
+            matplotlib.use(backend)  # back to the original backend
 
         # Run qa
         qa.qa(obsid)

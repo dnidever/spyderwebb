@@ -871,7 +871,8 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
     #wav = np.nansum(slwave*slgpsf,axis=0)/np.sum(slgpsf*np.isfinite(slwave*slgpsf),axis=0) * 1e4  # convert to Angstroms
 
-    # Save some diagnostic plots    
+    # Save some diagnostic plots
+    backend = matplotlib.rcParams['backend']
     matplotlib.use('Agg')
     fig = plt.figure(figsize=(12,7))
     medflux = np.nanmedian(oflux)
@@ -893,8 +894,7 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     plt.ylabel('Flux')
     plt.legend()
     plt.savefig(plotbase+'_flux.png',bbox_inches='tight')
-    matplotlib.use('MacOSX')
-
+    matplotlib.use(backend)  # back to the original backend
    
     # Get the wavelengths
     pmask = (opsf > 0.01)
@@ -1202,7 +1202,8 @@ def extract_slit_multi(input_model,slit,ratehdu=None,bratehdu=None,verbose=False
     #wav = np.nansum(wave*pmask,axis=0)/np.sum(pmask,axis=0) * 1e4  # convert to Angstroms
     #wav = np.nansum(slwave*slgpsf,axis=0)/np.sum(slgpsf*np.isfinite(slwave*slgpsf),axis=0) * 1e4  # convert to Angstroms
 
-    # Save some diagnostic plots    
+    # Save some diagnostic plots
+    backend = matplotlib.rcParams['backend']
     matplotlib.use('Agg')
     fig = plt.figure(figsize=(12,7))
     medflux = np.nanmedian(sloflux)
@@ -1224,7 +1225,7 @@ def extract_slit_multi(input_model,slit,ratehdu=None,bratehdu=None,verbose=False
     plt.ylabel('Flux')
     plt.legend()
     plt.savefig(plotbase+'_calflux.png',bbox_inches='tight')
-    matplotlib.use('MacOSX')
+    matplotlib.use(backend)  # back to the original backend
 
    
     # Get the wavelengths
@@ -1408,6 +1409,7 @@ def extract_slit_multi(input_model,slit,ratehdu=None,bratehdu=None,verbose=False
     fluxerr = ofluxerr
 
     # Save some diagnostic plots
+    backend = matplotlib.rcParams['backend']
     matplotlib.use('Agg')
     fig = plt.figure(figsize=(12,7))
     # Rate data
@@ -1431,7 +1433,7 @@ def extract_slit_multi(input_model,slit,ratehdu=None,bratehdu=None,verbose=False
     plt.ylim(-medflux/3.,1.8*medflux)    
     plt.legend()
     plt.savefig(plotbase+'_rateflux.png',bbox_inches='tight')
-    matplotlib.use('MacOSX')
+    matplotlib.use(backend)  # back to the original backend
     
     # Get the wavelengths
     pmask = (opsf > 0.01)
