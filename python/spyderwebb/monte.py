@@ -7,6 +7,7 @@ from astropy.table import Table
 from scipy.optimize import curve_fit
 from theborg.emulator import Emulator
 from doppler.spec1d import Spec1D
+import traceback
 from . import utils
 
 class JWSTSyn():
@@ -15,12 +16,10 @@ class JWSTSyn():
     
     def __init__(self,spobs=None,loggrelation=False,verbose=False):
         # Load the ANN models
-        #datadir = '/Users/nidever/synspec/nodegrid/'
-        #emwarm = Emulator.read(datadir+'grid7/grid7_annmodel_300neurons_0.0001rate_20000steps.pkl')
-        #emcool = Emulator.read(datadir+'grid8/grid8_annmodel_300neurons_0.0001rate_20000steps.pkl')
-        emwarm = Emulator.read(utils.datadir()+'ann_28pars_warm.pkl')
-        emcool = Emulator.read(utils.datadir()+'ann_28pars_cool.pkl')
-        self._models = [emcool,emwarm]
+        em1 = Emulator.read(utils.datadir()+'ann_29pars_3500-4200.pkl')
+        em2 = Emulator.read(utils.datadir()+'ann_29pars_4000-5000.pkl')
+        em3 = Emulator.read(utils.datadir()+'ann_29pars_4900-6000.pkl')
+        self._models = [em1,em2,em3]
         self.nmodels = len(self._models)
         self.labels = self._models[0].label_names
         self.nlabels = len(self.labels)
@@ -29,11 +28,12 @@ class JWSTSyn():
             for j in range(self.nlabels):
                 self._ranges[i,j,:] = [np.min(self._models[i].training_labels[:,j]),
                                        np.max(self._models[i].training_labels[:,j])]
-        self._ranges[0,0,1] = 4100.0
-        self._ranges[1,0,0] = 4100.0        
+        self._ranges[0,0,1] = 4100.0  # use 3500-4200 model up to 4100
+        self._ranges[1,0,0] = 4100.0  # use 4000-5000 model from 4100 to 4950
+        self._ranges[1,0,1] = 4950.0        
+        self._ranges[2,0,0] = 4950.0  # use 4900-6000 model from 4950
         self.ranges = np.zeros((self.nlabels,2),float)
-        self.ranges[0,:] = [self._ranges[0,0,0],self._ranges[1,0,1]]
-        for i in np.arange(1,self.nlabels):
+        for i in range(self.nlabels):            
             self.ranges[i,:] = [np.max(self._ranges[:,i,0]),np.min(self._ranges[:,i,1])]
         
         # alpha element indexes
@@ -81,10 +81,9 @@ class JWSTSyn():
         # Dictionary input
         if type(pars) is dict:
             labels = np.zeros(28)
-            # allow alpha to be input
             # Must at least have Teff and logg
             for k in pars.keys():
-                if k=='alpham':
+                if k=='alpham':   # mean alpha
                     ind = self._alphaindex.copy()
                 else:
                     ind, = np.where(np.array(self.labels)==k.lower())
@@ -108,19 +107,39 @@ class JWSTSyn():
             #    raise ValueError('pars must have '+str(len(self.labels))+' elements')
 
         return labels
-        
+
+    def get_best_model(self,labels):
+        """ This returns the first ANN model that has the right range."""
+        for m in range(self.nmodels):
+            ranges = self._ranges[m,:,:]
+            inside = True
+            for i in range(3):
+                inside &= (labels[i]>=ranges[i,0]) & (labels[i]<=ranges[i,1])
+            if inside:
+                return m
+        return None
+    
+    def mkbounds(self,params):
+        """ Make bounds for input parameter names."""
+        bounds = [np.zeros(len(params)),np.zeros(len(params))]
+        for i in range(len(params)):
+            if params[i].lower()=='alpham':   # mean alpha
+                ind = self._alphaindex.copy()
+                bounds[0][i] = np.max(self.ranges[ind,0])
+                bounds[1][i] = np.min(self.ranges[ind,1])
+            else:
+                ind, = np.where(np.array(self.labels)==params[i].lower())
+                bounds[0][i] = self.ranges[ind,0]
+                bounds[1][i] = self.ranges[ind,1]
+        return bounds
+                
     def inrange(self,pars):
         """ Check that the parameters are in range."""
         labels = self.mklabels(pars)
-        # Check temperature
-        rr = [self._ranges[0,0,0],self._ranges[1,0,1]]
-        if labels[0]<rr[0] or labels[0]>rr[1]:
-            return False,0,rr
-        # Get the right model to use based on input Teff
-        if labels[0] < self._ranges[0,0,1]:
-            modelindex = 0
-        else:
-            modelindex = 1
+        # Get the right model to use based on input Teff/logg/feh
+        modelindex = self.get_best_model(labels)
+        if modelindex is None:
+            return False,0,[self.ranges[0,0],self.ranges[0,1]]
         # Check other ranges
         for i in np.arange(1,self.nlabels):
             rr = [self._ranges[modelindex,i,0],self._ranges[modelindex,i,1]]
@@ -174,7 +193,7 @@ class JWSTSyn():
 
         return pars
                 
-    def __call__(self,pars,snr=None,spobs=None):
+    def __call__(self,pars,snr=None,spobs=None,vrel=None):
         # Get label array
         labels = self.mklabels(pars)
 
@@ -190,18 +209,24 @@ class JWSTSyn():
             else:
                 return np.zeros(spobs.size)+1e30
             #raise ValueError(error)
-
-        # Get the right model to use based on input Teff
-        if labels[0] < self._ranges[0,0,1]:
-            modelindex = 0
-        else:
-            modelindex = 1
+            
+        # Get the right model to use based on input Teff/logg/feh
+        modelindex = self.get_best_model(labels)
+            
+        # Wavelengths to use
+        wave = self._wsyn
             
         # Get the synthetic spectrum
         flux = self._models[modelindex](labels)
 
+        # Doppler shift
+        if vrel is not None and vrel != 0.0:
+            redwave = wave*(1+vrel/cspeed)
+            orig_flux = flux.copy()
+            flux = dln.interp(redwave,flux,wave)
+        
         # Make the synthetic Spec1D object
-        spsyn = Spec1D(flux,wave=self._wsyn)
+        spsyn = Spec1D(flux,wave=wave)
         # Say it is normalized
         spsyn.normalized = True
         spsyn._cont = np.ones(spsyn.flux.shape)        
@@ -311,8 +336,8 @@ class JWSTSyn():
         return fjac
         
     
-    def fit(self,spec,fitparams=None,loggrelation=False,initgrid=True,
-            outlier=False,verbose=False):
+    def fit(self,spec,fitparams=None,loggrelation=False,normalize=False,
+            initgrid=True,outlier=False,verbose=False):
         """
         Fit an observed spectrum with the ANN models and curve_fit.
 
@@ -354,34 +379,23 @@ class JWSTSyn():
         if verbose:
             print('Vrel: {:.2f} km/s'.format(vrel))
             print('S/N: {:.2f}'.format(spec.snr))
-        ## Now normalize
-        #newflux = fr.normalize(pspec['wave'],pspec['flux'])
-        #cont = pspec['flux']/newflux
-        #pspec['oflux'] = pspec['flux']
-        #pspec['oerr'] = pspec['err']        
-        #pspec['flux'] = newflux
-        #pspec['err'] = pspec['oerr']/cont      
-        ## Normalize
-        #fr.outwave = pspec['wave']
-        #if loggrelation:
-        #    estimates = [4500.0,-1.0,0.0]
-        #    bounds = [np.delete(fr.ranges[:,0],1),np.delete(fr.ranges[:,1],1)]            
-        #else:
-        #    estimates = [4500.0,2.5,-1.0,0.0]
-        #    bounds = [fr.ranges[:,0],fr.ranges[:,1]]
-        #estimates = [4500.0,2.0,0.0,0.0]
-        #bounds = [self.ranges[:,0],self.ranges[:,1]]
+        # Now normalize
+        if normalize:
+            if spec.normalized==False:
+                spec.normalize()
 
         if fitparams is None:
             fitparams = self.labels
         self.fitparams = np.array(fitparams)
         nfitparams = len(fitparams)
-        
-        bounds = [np.zeros(nfitparams),np.zeros(nfitparams)]
-        for i in range(nfitparams):
-            ind, = np.where(np.array(self.labels)==self.fitparams[i])
-            bounds[0][i] = self.ranges[ind,0]
-            bounds[1][i] = self.ranges[ind,1]
+
+        # Make bounds
+        #bounds = [np.zeros(nfitparams),np.zeros(nfitparams)]
+        #for i in range(nfitparams):
+        #    ind, = np.where(np.array(self.labels)==self.fitparams[i])
+        #    bounds[0][i] = self.ranges[ind,0]
+        #    bounds[1][i] = self.ranges[ind,1]
+        bounds = self.mkbounds(fitparams)
         
         # Run set of ~100 points to get first estimate
         ngrid = 100
@@ -415,8 +429,6 @@ class JWSTSyn():
             
             # Make the models
             for i in range(gridpars.shape[0]):
-                #tpars1 = {'teff':gridpars[i,0],'logg':gridpars[i,1],
-                #          'mh':gridpars[i,2],'alpham':gridpars[i,3]}
                 tpars1 = {}
                 for j in range(len(self.fitparams)):
                     tpars1[self.fitparams[j]] = gridpars[i,j]
@@ -427,13 +439,11 @@ class JWSTSyn():
             chisqarr = np.sum((synflux-spec.flux)**2/spec.err**2,axis=1)/spec.size
             bestind = np.argmin(chisqarr)
             estimates = gridpars[bestind,:]
-            #estlabels = self.mklabels({'teff':estimates[0],'logg':estimates[1],
-            #                           'mh':estimates[2],'alpham':estimates[3]})           
         else:
             estimates = np.zeros(len(self.fitparams))
             ind, = np.where(np.array(self.fitparams)=='teff')
             if len(ind)>0:
-                estimates[ind] = 4200.0
+                estimates[ind] = 5000.0  # 4200
             ind, = np.where(np.array(self.fitparams)=='logg')
             if len(ind)>0:
                 estimates[ind] = 1.5               
@@ -470,7 +480,7 @@ class JWSTSyn():
             traceback.print_exc()
             success = False
             out = {'success':False}
-                
+            
         # Remove outliers and refit
         if success and outlier:
             diff = spec.flux-bestmodel
@@ -531,7 +541,7 @@ def monte(params=None,nmonte=50,snr=50,initgrid=True,verbose=True):
 
     if params is None:
         params = {'teff':4000.0,'logg':2.0,'mh':0.0,'cm':0.1}
-    
+
     fitparams = list(tuple(params.keys()))
     labels = list(tuple(params.keys()))
     truepars = [params[k] for k in params.keys()]
@@ -541,22 +551,26 @@ def monte(params=None,nmonte=50,snr=50,initgrid=True,verbose=True):
     tab = np.zeros(nmonte,dtype=np.dtype(dt))
     for i in range(nmonte):
         print('---- Mock {:d} ----'.format(i+1))
-        sp = jw(params,snr=snr) 
-        out = jw.fit(sp,fitparams=fitparams,initgrid=initgrid,verbose=verbose)
-        tab['ind'][i] = i+1
-        tab['snr'][i] = out['snr']
-        tab['truepars'][i] = truepars
-        tab['pars'][i] = out['pars']
-        tab['perror'][i] = out['perror']
-        tab['chisq'][i] = out['chisq']
+        sp = jw(params,snr=snr)
+        try:
+            out = jw.fit(sp,fitparams=fitparams,initgrid=initgrid,verbose=verbose)
+            tab['ind'][i] = i+1
+            tab['snr'][i] = out['snr']
+            tab['truepars'][i] = truepars
+            tab['pars'][i] = out['pars']
+            tab['perror'][i] = out['perror']
+            tab['chisq'][i] = out['chisq']
+        except:
+            traceback.print_exc()
 
     # Figure out the bias and rms for each parameter
     print('\nFinal Monte Carlos Results')
     print('--------------------------')
     dt = [('label',str,10),('nmonte',int),('value',float),('bias',float),('rms',float)]
     res = Table(np.zeros(nparams,dtype=np.dtype(dt)))
+    gd, = np.where(tab['snr']>0)  # only use ones that succeeded
     for i in range(nparams):
-        resid = tab['pars'][:,i]-truepars[i]
+        resid = tab['pars'][gd,i]-truepars[i]
         res['label'][i] = labels[i]
         res['nmonte'][i] = nmonte
         res['value'][i] = truepars[i]
