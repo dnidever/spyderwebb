@@ -308,13 +308,15 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     if targfile is not None:
         targs = Table.read(targfile)
         for c in targs.colnames: targs[c].name = c.lower()
+        if 'MSAID' in targs.columns:
+            targs['id'] = targs['MSAID']
         if 'id' not in targs.columns:
             targs['id'] = np.arange(len(targs))+2  # APT has first ID as 2
 
         ind1,ind2 = dln.match(tab['id'],targs['id'])
         print(len(ind1),' matches to targeting catalog')
         # Add the new columns
-        if len(ind1)>0:        
+        if len(ind1)>0:
             for k in targs.columns:
                 if k not in tab.columns:
                     tab.add_column(Column(name=k,dtype=targs[k].dtype,length=len(tab)))

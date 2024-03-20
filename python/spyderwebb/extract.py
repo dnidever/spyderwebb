@@ -916,6 +916,8 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
         yw = otrace + 2*srcypos
         rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
         wav = wcs_wl_slitcorr * 1e4
+    else:
+        print('Not applying slit correction')
     dwave = np.gradient(wav)
 
     #import pdb; pdb.set_trace()

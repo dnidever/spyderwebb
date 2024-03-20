@@ -165,7 +165,7 @@ def joinspec(sp1,sp2):
     sp.xstart2 = sp2.xstart
     sp.xsize2 = sp2.xsize
     sp.ystart2 = sp2.ystart
-    sp.yize2 = sp2.ysize
+    sp.ysize2 = sp2.ysize
     sp.tcoef2 = sp2.tcoef
     sp.tsigcoef2 = sp2.tsigcoef
     
@@ -460,6 +460,7 @@ def process_exp(filename,outdir='./',clobber=False):
     #spec2.extract_2d.skip = True
     #spec2.srctype.skip = True
     #spec2.master_background_mos.skip = True
+    #print('SKIPPING WAVECORR!!!!!!!!!!!!!!')
     #spec2.wavecorr.skip = True
     #spec2.flat_field.skip = True
     #spec2.pathloss.skip = True
@@ -488,8 +489,39 @@ def process_exp(filename,outdir='./',clobber=False):
     return result
 
 
-def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=False,fluxcorrfile=None):
-    """ This extracts spectra from the JWST NIRSpec MSA data """
+def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
+           noback=False,fluxcorrfile=None,applyslitcorr=True):
+    """
+    This extracts spectra from the JWST NIRSpec MSA data
+
+    Parameters
+    ----------
+    obsname : str
+       Observation name, i.e. 'jw02609007001_03101'.
+    outdir : str, optional
+       Output directory name.  Default is the current directory.
+    logger : logging object, optional
+       Logging object.
+    clobber : bool, optional
+       Overwrite any existing files.
+    redtag : str, optional
+       Reduction tag to add at the end of files.  Default is "red".
+    noback : bool, optional
+       No background subtraction.  Default is False.
+    fluxcorrfile : str, optional
+       Flux correction file.  Default is no flux correction.
+    applyslitcorr : bool, optional
+       Apply slit corrections to the wavelengths.  Default is True.
+
+    Returns
+    -------
+    Reduced data are written to files.  Nothing is returned.
+
+    Example
+    -------
+    reduce.reduce('jw02609007001_03101',clobber=True,noback=True)
+
+    """
 
     #if fluxcorrfile is None:
     #    fluxcorrfile = '/Users/nidever/jwst/2609/nirspec/nirspec_fluxcorr.fits'
@@ -563,7 +595,8 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
 
             #print('KLUDGE!!!!')
             #expname = 'jw02609006001_03101_00003'
-            speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,clobber=clobber,fluxcorr=fluxcorr)
+            speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,
+                                  clobber=clobber,fluxcorr=fluxcorr,applyslitcorr=applyslitcorr)
             srcname = [s.source_name for s in speclist]
             #slexpspec.append(slspeclist)
             expspec.append(speclist)            
@@ -580,31 +613,25 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
             print(i+1,srcname)
             
             # Stack spectra from multiple exposures
-            if nexp>1:
-                # Loop over exposures
-                #slsplist = []
-                splist = []                
-                for e in range(nexp):
-                    #eslspeclist = slexpspec[e]  # list of all spectra from this exposures
-                    especlist = expspec[e]  # list of all spectra from this exposures                    
-                    esourcename = np.array([s.source_name for s in especlist])
-                    ind, = np.where(esourcename==srcname)
-                    if len(ind)>0:
-                        #slsplist.append(eslspeclist[ind[0]])
-                        splist.append(especlist[ind[0]])                        
+            # Loop over exposures
+            splist = []                
+            for e in range(nexp):
+                #eslspeclist = slexpspec[e]  # list of all spectra from this exposures
+                especlist = expspec[e]  # list of all spectra from this exposures                    
+                esourcename = np.array([s.source_name for s in especlist])
+                ind, = np.where(esourcename==srcname)
+                if len(ind)>0:
+                    #slsplist.append(eslspeclist[ind[0]])
+                    splist.append(especlist[ind[0]])                        
                         
-                # Do the stacking
-                if len(splist)>1:
-                    print('Combining spectra from multiple exposures')
-                    #combslsp,slstack = stackspec(slsplist)
-                    combsp,stack = stackspec(splist)                    
-                else:
-                    #combslsp = slsplist[0]
-                    combsp = splist[0]                    
+            # Do the stacking
+            if len(splist)>1:
+                print('Combining spectra from multiple exposures')
+                #combslsp,slstack = stackspec(slsplist)
+                combsp,stack = stackspec(splist)                    
             else:
-                import pdb; pdb.set_trace()
                 #combslsp = slsplist[0]
-                combsp = splist[0]                
+                combsp = splist[0]                    
                 
             # Write to file
             outfile = stackdir+'/spStack-'+srcname+'_'+redtag+'.fits'
@@ -640,7 +667,8 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',noback=Fal
 
 
 
-def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,redtag='red',fluxcorr=None):
+def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
+               redtag='red',fluxcorr=None,applyslitcorr=True):
     """ This performs 1D-extraction of the spectra in one exposure."""
 
     #if logger is None: logger=dln.basiclogger()
@@ -791,7 +819,8 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
                 backslit1 = backdata1.slits[bind1[0]]
             #sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,ocalhdu1[ind1[0]*10+1],plotbase=plotbase)
             try:
-                sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,applyslitcorr=True,plotbase=plotbase)
+                sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,
+                                           applyslitcorr=applyslitcorr,plotbase=plotbase)
                 # Apply the flux correction
                 if sp1 is not None and fluxcorr is not None:
                     fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp1.wave)
@@ -838,6 +867,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,re
         # Save the file
         if sp is not None:
             print('Writing to '+outfile)
+            #import pdb; pdb.set_trace()
             sp.write(outfile,overwrite=True)
             #slsp.write(outfile,overwrite=True)            
             #sp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
