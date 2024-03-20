@@ -153,6 +153,8 @@ def joinspec(sp1,sp2):
     sp.slitlet_id = sp1.slitlet_id
     sp.source_ra = sp1.source_ra
     sp.source_dec = sp1.source_dec
+    sp.source_xpos = sp1.source_xpos
+    sp.source_ypos = sp1.source_ypos
     sp.ytrace1 = sp1.ytrace
     sp.xstart1 = sp1.xstart
     sp.xsize1 = sp1.xsize
@@ -460,8 +462,8 @@ def process_exp(filename,outdir='./',clobber=False):
     #spec2.extract_2d.skip = True
     #spec2.srctype.skip = True
     #spec2.master_background_mos.skip = True
-    #print('SKIPPING WAVECORR!!!!!!!!!!!!!!')
-    #spec2.wavecorr.skip = True
+    print('SKIPPING WAVECORR!!!!!!!!!!!!!!')
+    spec2.wavecorr.skip = True
     #spec2.flat_field.skip = True
     #spec2.pathloss.skip = True
     #spec2.barshadow.skip = True

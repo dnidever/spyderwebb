@@ -307,7 +307,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     # Add targeting information
     if targfile is not None:
         targs = Table.read(targfile)
-        for c in targs.colnames: targs[c].name = c.lower()
+        #for c in targs.colnames: targs[c].name = c.lower()
         if 'MSAID' in targs.columns:
             targs['id'] = targs['MSAID']
         if 'id' not in targs.columns:

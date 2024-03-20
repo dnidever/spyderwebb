@@ -970,6 +970,8 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     sp.offset = yoffset
     sp.tcoef = tcoef
     sp.tsigcoef = tsigcoef
+    sp.source_xpos = srcxpos
+    sp.source_ypos = srcypos    
     
     return sp
 
