@@ -36,7 +36,7 @@ except ImportError:
     print('ERROR: the documentation requires the sphinx-astropy package to be installed')
     sys.exit(1)
 
-sys.path.insert(0, os.path.abspath('../python/spyderwebb/'))
+#sys.path.insert(0, os.path.abspath('../python/spyderwebb/'))
     
 # Get configuration information from setup.cfg
 from configparser import ConfigParser
@@ -113,7 +113,7 @@ release = setup_cfg['version']
 # Please update these texts to match the name of your package.
 html_theme_options = {
     'logotext1': ' ',
-    'logotext2': 'Spyderwebb',  # white,  semi-bold
+    'logotext2': 'SPyderWebb',  # white,  semi-bold
     'logotext3': ':docs'   # white,  light
 }
 # Add/Update "html_theme_options" like this on your conf.py
@@ -201,7 +201,7 @@ exclude_patterns.append('*/make-data.*')
 #extensions += ['nbsphinx']
 #extensions += ['IPython.sphinxext.ipython_console_highlighting']
 
-extensions += ['sphinx.ext.mathjax','sphinx.ext.autodoc','sphinx.ext.viewcode']
+extensions += ['sphinx.ext.mathjax','sphinx.ext.autodoc','sphinx.ext.viewcode','sphinx.ext.autosummary']
 mathjax_path = "https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
 
 # nbsphinx_execute_arguments = [
