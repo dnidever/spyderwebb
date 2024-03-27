@@ -9,7 +9,7 @@ SPyderWebb
 
 Introduction
 ============
-|spyderwebb| is Python software package to reduce JWST NIRSPec MSA data.  It is built on the `JWST Calibration ppeline<https://jwst-docs.stsci.edu/jwst-science-calibration-pipeline>`_ but performs certain tasks differently.
+|spyderwebb| is Python software package to reduce JWST NIRSPec MSA data.  It is built on the `JWST Calibration ppeline <https://jwst-docs.stsci.edu/jwst-science-calibration-pipeline>`_ but performs certain tasks differently.
 
 .. toctree::
    :maxdepth: 1
