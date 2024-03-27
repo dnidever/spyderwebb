@@ -24,7 +24,7 @@ maintainers = [
 ]
 description = "JWST NIRspec multi-object spectroscopy reduction software"
 readme = "README.rst"
-license = {file = "LICENSE.txt"}
+license = {file = "LICENSE"}
 keywords = ["spectroscopy", "jwst", "radial velocity", "abundances"]
 classifiers = [
   "Development Status :: 3 - Alpha",
