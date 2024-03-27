@@ -3,11 +3,11 @@ Installation
 ************
 
 
-Installing Spyderwebb
+Installing SPyderWebb
 =====================
 
 
-The easiest way to install |Spyderwebb| is using pip:
+The easiest way to install |spyderwebb| is using pip:
 
 To get the very lastest version:
 
@@ -26,4 +26,5 @@ Here are the required packages.  Most of them can be pip installed.
 - scipy
 - astropy
 - matplotlib
+- dlnpyutils
 - jwst
