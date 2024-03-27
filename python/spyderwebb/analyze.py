@@ -403,8 +403,8 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     info : list
        List of dictionaries, one per spectrum, that includes spectra and arrays.
 
-    Example
-    -------
+    Examples
+    --------
 
     tab,info = run_ferre(files,vrel,algor=1,nruns=5)
 

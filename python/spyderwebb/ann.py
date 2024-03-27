@@ -223,8 +223,8 @@ class JWSTANNModel():
         spec : Spec1D
            JWST model spectrum.
 
-        Example
-        -------
+        Examples
+        --------
 
         spec = jw(pars)
 
@@ -330,8 +330,8 @@ class JWSTANNModel():
           Array of (1-D) model values for the input xdata and parameters.
           If retmodel==True, then (model,jac) are returned.
 
-        Example
-        -------
+        Examples
+        --------
 
         jac = JWSTSyn.jac(wave,*pars)
 
@@ -415,8 +415,8 @@ class JWSTANNModel():
         info : list
            List of dictionaries, one per spectrum, that includes spectra and arrays.
 
-        Example
-        -------
+        Examples
+        --------
 
         tab,info = fit(spec)
 
