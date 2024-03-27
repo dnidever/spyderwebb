@@ -15,8 +15,7 @@ Introduction
    :maxdepth: 1
 
    install
-   gettingstarted
-   examples
+   tutorial
    modules
 	      
 
