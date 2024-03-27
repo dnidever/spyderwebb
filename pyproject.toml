@@ -14,6 +14,8 @@ dependencies = [
   "scipy",
   "dlnpyutils",
   "thedoppler",
+  "asdf",
+  "jwst"
 ]
 requires-python = ">=3.8"
 authors = [
