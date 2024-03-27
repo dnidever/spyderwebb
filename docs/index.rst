@@ -9,7 +9,7 @@ SPyderWebb
 
 Introduction
 ============
-|SPyderWebb| is Python software package to reduce JWST NIRSPec MSA data.  It is built on the `JWST Calibration ppeline<https://jwst-docs.stsci.edu/jwst-science-calibration-pipeline>` but performs certain tasks differently.
+|spyderwebb| is Python software package to reduce JWST NIRSPec MSA data.  It is built on the `JWST Calibration ppeline<https://jwst-docs.stsci.edu/jwst-science-calibration-pipeline>`_ but performs certain tasks differently.
 
 .. toctree::
    :maxdepth: 1
@@ -22,7 +22,7 @@ Introduction
 
 Description
 ===========
-|SPyderWebb| reduces and extracts JWST NIRSpec spectra.
+|spyderwebb| reduces and extracts JWST NIRSpec spectra.
 
 The main steps are:
 
@@ -36,23 +36,15 @@ The main steps are:
 3. Run Doppler to determine radial velocities
 4. Run FERRE with a 4D grid (Teff, logg, [M/H], [alpha/M]) to determine abundances and stellar parameters.
 
-Examples
+Tutorial
 ========
+
+Follow the instructions in the `tutorial<tutorial>`_ to run |spyderwebb| on your JWST NIRSpec MSA data.
 
 .. toctree::
     :maxdepth: 1
 
-    examples
-    gettingstarted
-
-    # m71/
-    from spyderwebb import reduc
-    reduce.process('jw02609006001_03101_0000?_nrs?/*_rate.fits',outdir='red')
-
-    # m71/red/
-    obsname = 'jw02609006001_03101'
-    out=reduce.reduce(obsname,clobber=True,noback=True)
-
+    tutorial
 
 *****
 Index
@@ -61,7 +53,3 @@ Index
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`			  
-			  
-.. rubric:: Footnotes
-
-.. [#f1] For `Christian Doppler <https://en.wikipedia.org/wiki/Christian_Doppler>`_ who was an Austrian physicist who discovered the `Doppler effect <https://en.wikipedia.org/wiki/Doppler_effect>`_ which is the change in frequency of a wave due to the relative speed of the source and observer.
