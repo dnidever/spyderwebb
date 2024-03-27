@@ -116,11 +116,15 @@ def scalarDecorator(func):
 
 @scalarDecorator
 def wave2pix(wave,wave0):
-    """ convert wavelength to pixel given wavelength array
-    Args :
+    """
+    Convert wavelength to pixel given wavelength array
+
+    Parameters
+    ----------
        wave(s) : wavelength(s) (\AA) to get pixel of
        wave0 : array with wavelength as a function of pixel number 
-    Returns :
+    Returns
+    -------
        pixel(s) in the chip
     """
     pix0 = np.arange(len(wave0))
@@ -140,12 +144,18 @@ def wave2pix(wave,wave0):
 
 @scalarDecorator
 def pix2wave(pix,wave0):
-    """ convert pixel(s) to wavelength(s)
-    Args :
+    """
+    Convert pixel(s) to wavelength(s).
+
+    Parameters
+    ----------
        pix : pixel(s) to get wavelength at
        wave0 : array with wavelength as a function of pixel number 
-    Returns :
-       wavelength(s) in \AA
+
+    Returns
+    -------
+    wavelength(s) in \AA
+
     """
     pix0 = np.arange(len(wave0))
     # Need to sort into ascending order
