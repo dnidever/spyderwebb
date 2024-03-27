@@ -185,7 +185,38 @@ def tracing(im,err,ytrace=None,step=15,nbin=25):
     return ttab
 
 def optimalpsf(im,ytrace,err=None,off=10,backoff=50,smlen=31):
-    """ Compute the PSF from the image using "optimal extraction" techniques."""
+    """
+    Compute the PSF from the image using "optimal extraction" techniques.
+
+    Parameters
+    ----------
+    im : numpy array
+       Flux image with the spectral trace.
+    ytrace : numpy array
+       Array giving the position of the trace in the Y-direction.
+    err : numpy array, optional
+       Uncertainty array for "im".
+    off : int, optional
+       The region around ytrace that is used to construct the spectral PSF.
+         Default is 10.
+    backoff : int, optional
+       Vertical size of subimage to work on and use to estimate the
+         background.  The Y boundary is median(ytrace)+/-backoff.
+         Default is 50.
+    smlen : int, optional
+       Smoothing width in the spectral dimension.  Default is 31.
+
+    Returns
+    -------
+    psf : numpy array
+       The 2D normalized PSF for the spectral trace.
+
+    Example
+    -------
+
+    psf = optimalpsf(im,ytrace,err)
+
+    """
     ny,nx = im.shape
     yest = np.nanmedian(ytrace)
     # Get the subimage
@@ -227,7 +258,48 @@ def optimalpsf(im,ytrace,err=None,off=10,backoff=50,smlen=31):
     
     
 def extract_optimal(im,ytrace,imerr=None,verbose=False,off=10,backoff=50,smlen=31):
-    """ Extract a spectrum using optimal extraction (Horne 1986)"""
+    """
+    Extract a spectrum using optimal extraction (Horne 1986).
+    This uses an empirical PSF constructed from the image itself.
+
+    Parameters
+    ----------
+    im : numpy array
+       Flux image with the spectral trace.
+    ytrace : numpy array
+       Array giving the position of the trace in the Y-direction.
+    imerr : numpy array, optional
+       Uncertainty array for "im".
+    verbose : bool, optional
+       Verbose output to the screen.  Default is False.
+    off : int, optional
+       The region around ytrace that is used to construct the spectral PSF.
+         Default is 10.
+    backoff : int, optional
+       Vertical size of subimage to work on and use to estimate the
+         background.  The Y boundary is median(ytrace)+/-backoff.
+         Default is 50.
+    smlen : int, optional
+       Smoothing width in the spectral dimension.  Default is 31.
+
+    Returns
+    -------
+    flux : numpy array
+       Spectral flux array.
+    fluxerr : numpy array
+       Flux uncertainty array.
+    trace : numpy array
+       Array giving the position of the trace in the Y-direction derived
+         from the empirical PSF.
+    psf : numpy array
+       The 2D normalized PSF for the spectral trace.
+
+    Example
+    -------
+
+    flux,fluxerr,trace,psf = extract_optimal(im,ytrace,imerr)
+
+    """
     ny,nx = im.shape
     yest = np.nanmedian(ytrace)
     # Get the subo,age
@@ -309,7 +381,39 @@ def extract_optimal(im,ytrace,imerr=None,verbose=False,off=10,backoff=50,smlen=3
 
 
 def extract_psf(im,psf,err=None,skyfit=True):
-    """ Extract spectrum with a PSF."""
+    """
+    Extract spectrum with a PSF using weighted
+    linear regression.
+
+    Parameters
+    ----------
+    im : numpy array
+       Flux image with the spectral trace.
+    psf : numpy array
+       2D normalized PSF to use for the extraction.
+    err : numpy array, optional
+       Uncertainty array for "im".
+    skyfit : bool, optional
+       Fit the sky/background.  Default is True.
+
+    Returns
+    -------
+    flux : numpy array
+       Spectral flux array.
+    fluxerr : numpy array
+       Flux uncertainty array.
+    If skyfit is True, two additional values are returned.
+    sky : numpy array
+       Sky/background flux array.
+    skyerr : numpy array
+       Uncertainty in the sky flux array.
+
+    Example
+    -------
+
+    flux,fluxerr,sky,skyerr = extract_psf(im,psf,imerr,skyfit=True)
+
+    """
 
     if err is None:
         err = np.ones(im.shape,float)
@@ -355,7 +459,31 @@ def extract_psf(im,psf,err=None,skyfit=True):
         return flux,fluxerr
 
 def extractcol(im,err,psf):
-    # Optimal extraction of a single column
+    """
+    Optimal extraction of a single column.
+
+    Parameters
+    ----------
+    im : numpy array
+       Flux 1D array column for the spectral trace.
+    err : numpy array, optional
+       Uncertainty array for "im".
+    psf : numpy array
+       1D normalized PSF to use for the extraction.
+
+    Returns
+    -------
+    flux : numpy array
+       Spectral flux array.
+    fluxerr : numpy array
+       Flux uncertainty array.
+
+    Example
+    -------
+
+    flux,fluxerr = extractcol(im,err,psf)
+    
+    """
     wt = psf**2/err**2
     wt[(wt<0) | ~np.isfinite(wt)] = 0
     totwt = np.nansum(wt,axis=0)
@@ -573,9 +701,40 @@ def fix_outliers(im,err=None,nsigma=5,nfilter=11,niter=3):
         return outim
         
 
-def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
+def extract_slit(input_model,slit,backslit=None,verbose=False,
                  applyslitcorr=True,plotbase='extract'):
-    """ Extract one slit."""
+    """
+    Extract the spectrum for a single slit using optiomal (Horne) extraction.
+    reduce.extractexp() runs this function for all the slits in an exposure.
+
+    Parameters
+    ----------
+    input_model : 
+       The cal file information as loaded by datamodels.open(calfile).
+    slit : slit object
+       Single slit object from the reduced cal file.
+    backslit : slit object
+       Slit object for the same source but from the background/dithered
+         exposure.
+    verbose : bool, optional
+       Verbose output to the screen.  Default is False.
+    applyslitcorr : bool, optional
+       Apply SPyderWebb slit correction to the wavelengths.
+    plotbase : str, optional
+       Output base name for the plot.  Default is "extract".
+         The diagnostic plot has filename plotbase+'_flux.png"
+
+    Returns
+    -------
+    sp : Spec1D object
+       The fully extracted spectrum as a Spec1D object.
+
+    Example
+    -------
+
+    sp = extract_slit(input_model,slit,backslit=None,ocalhdu=False)
+
+    """
 
     print('source_name:',slit.source_name)
     print('source_id:',slit.source_id)
@@ -911,7 +1070,7 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
     wav = wcs_wl * 1e4
     if applyslitcorr:
-        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (2*srcxpos,2*srcypos))        
+        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (2*srcxpos,2*srcypos))
         xw = x + xlo + 2*srcxpos
         yw = otrace + 2*srcypos
         rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
@@ -956,7 +1115,9 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     #sp.jd = Time(input_model.meta.date).jd
     sp.jd = Time(slit.meta.time.barycentric_expmid,format='mjd').jd
     sp.exptime = slit.meta.exposure.effective_exposure_time
-    sp.bc = slit.meta.wcsinfo.velosys/1e3   # BC in km/s
+    # The JWST Pipeline corrects the wavelength for the barycentric shift already
+    sp.velosys = slit.meta.wcsinfo.velosys/1e3   # BC already applied in km/s
+    sp.bc = 0.0
     sp.ytrace = ytrace
     sp.source_name = slit.source_name
     sp.source_id = slit.source_id
@@ -974,6 +1135,11 @@ def extract_slit(input_model,slit,backslit=None,ocalhdu=False,verbose=False,
     sp.source_ypos = srcypos    
     
     return sp
+
+
+
+####################### OLD CODE #####################################
+
 
 
 def extract_slit_multi(input_model,slit,ratehdu=None,bratehdu=None,verbose=False,plotbase='extract'):

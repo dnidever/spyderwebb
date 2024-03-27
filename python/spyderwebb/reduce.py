@@ -109,7 +109,27 @@ def getexpinfo(obsname,logger=None,redtag='red'):
     return edict
 
 def joinspec(sp1,sp2):
-    """ Combine NRS1 and NRS2."""
+    """
+    Combine NRS1 and NRS2 spectra into one Spec1D object.
+
+    Parameters
+    ----------
+    sp1 : Spec1D object
+       NRS1 spectrum.
+    sp2 : Spec1D object
+       NRS2 spectrum.
+
+    Returns
+    -------
+    sp : Spec1D object
+       Final combined Spec1D spectrum.
+
+    Example
+    -------
+
+    sp = joinspec(sp1,sp2)
+
+    """
 
     # Combine the two spectra
     #  use 2D Spec1D arrays
@@ -147,6 +167,7 @@ def joinspec(sp1,sp2):
     if hasattr(sp1,'fluxcorr'):
         sp.fluxcorr = fluxcorr
     sp.exptime = sp1.exptime
+    sp.velosys = sp1.velosys
     sp.bc = sp1.bc
     sp.source_name = sp1.source_name
     sp.source_id = sp1.source_id
@@ -174,7 +195,27 @@ def joinspec(sp1,sp2):
     return sp
 
 def stackspec(splist):
-    """ Stack multiple spectra of the same source."""
+    """
+    Stack multiple spectra of the same source.
+
+    Parameters
+    ----------
+    splist : list
+       List of Spec1D spectra of the same object.
+
+    Returns
+    -------
+    comb : Spec1D spectrum
+       Combined spectrum.
+    stack : Spec1D spectrum
+       Resampled individual spectra.
+
+    Example
+    -------
+
+    comb,stack = stackspec(splist)
+
+    """
 
     nspec = len(splist)
     npix = splist[0].npix
@@ -218,7 +259,8 @@ def stackspec(splist):
 
         # Barycentric correction
         if spec.bc is None:
-            bc = spec.barycorr()
+            #bc = spec.barycorr()
+            bc = 0.0
         else:
             bc = spec.bc
         stack.bc[i] = bc
@@ -357,8 +399,35 @@ def stackspec(splist):
     
     return comb,stack
 
-def process(fileinput,outdir='./',clobber=False):
-    """ Process multiple rate files using JWST calwebb_spec2 pipeline."""
+def process(fileinput,outdir='./',clobber=False,applywavecorr=True):
+    """
+    Process multiple rate files using JWST calwebb_spec2 pipeline.
+    This is the first step of running the SPyderwebb pipeline and
+    starts with the rate files.
+
+    Parameters
+    ----------
+    fileinput : list
+       Glob command for the rate files.  For example,
+         "jw02609006001_03101_0000?_nrs?/*_rate.fits".
+    outdir : str, optional
+       Main output directory.  Default is "./".
+    clobber : bool, optional
+       Overwrite any existing files.
+    applywavecorr : bool, optional
+       Apply the JWST cal pipeline wavecorr correction.  Default is True.
+
+    Returns
+    ------
+    Nothing is returned.  Reduced files are written to disk.
+
+    Example
+    -------
+
+    process('jw02609006001_03101_0000?_nrs?/*_rate.fits',outdir='red')
+
+    """
+
     files = glob(fileinput)
     nfiles = len(files)
     print(nfiles,' files found for ',fileinput)
@@ -382,12 +451,42 @@ def process(fileinput,outdir='./',clobber=False):
         if grating=='MIRROR':
             print('NOT a dispersed image')
             continue
-        res = process_exp(filename,outdir=outdir,clobber=clobber)
+        res = process_exp(filename,outdir=outdir,clobber=clobber,
+                          applywavecorr=applywavecorr)
     
     
 
-def process_exp(filename,outdir='./',clobber=False):
-    """ Process exposure image through the JWST calwebb_spec2 pipeline."""
+def process_exp(filename,outdir='./',clobber=False,applywavecorr=True):
+    """
+    Process exposure image through the JWST calwebb_spec2 pipeline.
+
+    Process multiple rate files using JWST calwebb_spec2 pipeline.
+    This is the first step of running the SPyderwebb pipeline and
+    starts with the rate files.
+
+    Parameters
+    ----------
+    filename : str
+       Name of the a single rate file.
+    outdir : str, optional
+       Main output directory.  Default is "./".
+    clobber : bool, optional
+       Overwrite any existing files.
+    applywavecorr : bool, optional
+       Apply the JWST cal pipeline wavecorr correction.  Default is True.
+
+    Returns
+    ------
+    result : 
+       Output from the Spec2 pipeline.
+    Reduced files are written to disk.
+
+    Example
+    -------
+
+    result = process_exp('jw02609006001_03101_00002_nrs1/jw02609006001_03101_00002_nrs1_rate.fits')
+
+    """
     # filename should be a rate filename
     
     # Do NOT perform image-to-image background subtraction
@@ -462,8 +561,12 @@ def process_exp(filename,outdir='./',clobber=False):
     #spec2.extract_2d.skip = True
     #spec2.srctype.skip = True
     #spec2.master_background_mos.skip = True
-    print('SKIPPING WAVECORR!!!!!!!!!!!!!!')
-    spec2.wavecorr.skip = True
+    if applywavecorr==False:
+        print('SKIPPING WAVECORR')
+        spec2.wavecorr.skip = True
+    else:
+        print('Applying wavecorr')
+        spec2.wavecorr.skip = False
     #spec2.flat_field.skip = True
     #spec2.pathloss.skip = True
     #spec2.barshadow.skip = True
@@ -494,7 +597,8 @@ def process_exp(filename,outdir='./',clobber=False):
 def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
            noback=False,fluxcorrfile=None,applyslitcorr=True):
     """
-    This extracts spectra from the JWST NIRSpec MSA data
+    Extract spectra from the JWST NIRSpec MSA data.
+    This is step two in the SPyderWebb data reduction process.
 
     Parameters
     ----------
@@ -525,21 +629,9 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
 
     """
 
-    #if fluxcorrfile is None:
-    #    fluxcorrfile = '/Users/nidever/jwst/2609/nirspec/nirspec_fluxcorr.fits'
-    #    # Load the fluxcorr file
-    #    ffluxcorr = fits.getdata(fluxcorrfile)
-    #    # wavelength coefficients with linear wavelength steps
-    #    # 3834 pixels, from 9799.765 to 18797.7624 A
-    #    wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
-    #    npix = 3834
-    #    xpix = np.arange(npix)
-    #    wfluxcorr = np.polyval(wcoef,xpix)
-    #    fluxcorr = {'flux':ffluxcorr,'wave':wfluxcorr}
     fluxcorr = None
     
     if outdir.endswith('/')==False: outdir+='/'
-    #if logger is None: logger=dln.basiclogger()
     
     # Get exposures information
     edict = getexpinfo(obsname,redtag=redtag)
@@ -595,16 +687,11 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             else:
                 backexpname = None
 
-            #print('KLUDGE!!!!')
-            #expname = 'jw02609006001_03101_00003'
             speclist = extractexp(expname,backexpname,outdir=odir,redtag=redtag,
                                   clobber=clobber,fluxcorr=fluxcorr,applyslitcorr=applyslitcorr)
             srcname = [s.source_name for s in speclist]
-            #slexpspec.append(slspeclist)
             expspec.append(speclist)            
             sourcenames += srcname
-
-        #import pdb; pdb.set_trace()
             
         # Loop over sources
         print('Combining spectra')
@@ -618,29 +705,23 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             # Loop over exposures
             splist = []                
             for e in range(nexp):
-                #eslspeclist = slexpspec[e]  # list of all spectra from this exposures
                 especlist = expspec[e]  # list of all spectra from this exposures                    
                 esourcename = np.array([s.source_name for s in especlist])
                 ind, = np.where(esourcename==srcname)
                 if len(ind)>0:
-                    #slsplist.append(eslspeclist[ind[0]])
                     splist.append(especlist[ind[0]])                        
                         
             # Do the stacking
             if len(splist)>1:
                 print('Combining spectra from multiple exposures')
-                #combslsp,slstack = stackspec(slsplist)
                 combsp,stack = stackspec(splist)                    
             else:
-                #combslsp = slsplist[0]
                 combsp = splist[0]                    
                 
             # Write to file
             outfile = stackdir+'/spStack-'+srcname+'_'+redtag+'.fits'
             print('Writing to '+outfile)
             combsp.write(outfile,overwrite=True)
-            #combslsp.write(outfile,overwrite=True)            
-            #combsp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
 
             # Save a plot
             backend = matplotlib.rcParams['backend']
@@ -654,12 +735,6 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             plt.ylim(-medflux/3.,1.8*medflux)
             plt.savefig(stackplotdir+'/spStack-'+srcname+'_'+redtag+'_flux.png',bbox_inches='tight')
             plt.clf()
-            #medflux = np.nanmedian(combsp.flux)            
-            #plt.plot(combsp.wave,combsp.flux)
-            #plt.xlabel('X')
-            #plt.ylabel('Flux')
-            #plt.ylim(-medflux/3.,1.8*medflux)            
-            #plt.savefig(stackplotdir+'/spStack-'+srcname+'_rate_flux.png',bbox_inches='tight')
             matplotlib.use(backend)  # back to the original backend
 
         # Run qa
@@ -667,13 +742,47 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             
     print('Done')
 
-
-
 def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                redtag='red',fluxcorr=None,applyslitcorr=True):
-    """ This performs 1D-extraction of the spectra in one exposure."""
+    """
+    This performs 1D-extraction of the spectra in one exposure.
 
-    #if logger is None: logger=dln.basiclogger()
+    Parameters
+    ----------
+    expname : str
+       Exposure name, e.g. 'jw02609009001_04103_00001'.
+    backexpname : str, optional
+       Exposure name for the "background", i.e. the dithered position.
+          This is optional since background subtraction is performed
+          during extraction to 1D.
+    logger : logger, optional
+       Logging object.
+    outdir : str, optional
+       Output directory.  Default is "./".
+    clobber : bool, optional
+       Overwrite any existing data.  Default is False.
+    redtag : str, optional
+       Reduction output file "tag" to use.  This is added at the end of the
+         output FITS filenames, e.g. _red.fits.  Default is "red".
+    fluxcorr : str, optional
+       Name of the flux correction file.  By default, no flux correction
+         is applied.
+    applyslitcorr : bool, optional
+       Apply the SPyderWebb slit correction to the wavelengths.  Default is True.
+
+    Returns
+    -------
+    speclist : list
+       List of final Spec1D objects.
+
+    Example
+    -------
+
+    speclist = extract('jw02609009001_04103_00001',outdir='G140H-F100LP-M31-FINAL-LONG',
+                       redtag='red',clobber=True)
+
+    """
+
     plotdir = outdir+'/plots/'
     if os.path.exists(plotdir)==False:
         os.makedirs(plotdir)
@@ -683,21 +792,10 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
     calfilename2 = expname+'_nrs2_'+redtag+'.fits'
     origcalfilename1 = expname+'_nrs1_cal.fits'
     origcalfilename2 = expname+'_nrs2_cal.fits'    
-    #calfilename1 = expname+'_nrs1/'+expname+'_nrs1_'+redtag+'.fits'    
-    #ratefilename1 = expname+'_nrs1/'+expname+'_nrs1_rate.fits'    
-    #calfilename2 = expname+'_nrs2/'+expname+'_nrs2_'+redtag+'.fits'
-    #ratefilename2 = expname+'_nrs2/'+expname+'_nrs2_rate.fits'
-    #for f in [calfilename1,ratefilename1,calfilename1,ratefilename1]:
     for f in [calfilename1,calfilename1]:        
         if os.path.exists(f)==False:
             raise ValueError(f+' NOT FOUND')
     if backexpname is not None:
-        #bratefilename1 = backexpname+'_nrs1/'+backexpname+'_nrs1_rate.fits'
-        #bratefilename2 = backexpname+'_nrs2/'+backexpname+'_nrs2_rate.fits'
-        #if os.path.exists(bratefilename1)==False:
-        #    raise ValueError(bratefilename1+' NOT FOUND')
-        #if os.path.exists(bratefilename2)==False:
-        #    raise ValueError(bratefilename2+' NOT FOUND')        
         bcalfilename1 = backexpname+'_nrs1_'+redtag+'.fits'
         bcalfilename2 = backexpname+'_nrs2_'+redtag+'.fits'        
         if os.path.exists(bcalfilename1)==False:
@@ -775,9 +873,6 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                 print(outfile+' is an empty file.')
                 continue
             print(outfile+' already exists. Loading')            
-            #slsp = doppler.read(outfile)
-            #slspeclist.append(slsp)
-            #sp = doppler.read(outfile.replace('_cal.fits','_rate.fits'))
             sp = doppler.read(outfile)
             speclist.append(sp)
             continue
@@ -788,19 +883,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
         if data2 is None:
             print('Loading '+calfilename2)    
             data2 = datamodels.open(calfilename2)
-        #if ocalhdu1 is None:
-        #    ocalhdu1 = fits.open(origcalfilename1)
-        #if ocalhdu2 is None:
-        #    ocalhdu1 = fits.open(origcalfilename2)            
-        #if rate1 is None:
-        #    rate1 = fits.open(ratefilename1)
-        #if rate2 is None:
-        #    rate2 = fits.open(ratefilename2)            
         if backexpname is not None:
-            #if brate1 is None:
-            #    brate1 = fits.open(bratefilename1)
-            #if brate2 is None:
-            #    brate2 = fits.open(bratefilename2)
             if backdata1 is None:
                 print('Loading '+bcalfilename1)
                 backdata1 = datamodels.open(bcalfilename1)
@@ -808,7 +891,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                 print('Loading '+bcalfilename2)                
                 backdata2 = datamodels.open(bcalfilename2)            
                 
-        # NRS1
+        # ----- NRS1 -----
         print('-NRS1-')
         slsp1,sp1,backslit1,bind1 = None,None,None,[]
         ind1, = np.where(sourceid1==sourceid)
@@ -816,10 +899,8 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
             bind1, = np.where(bsourceid1==sourceid)
         if len(ind1)>0:
             plotbase = plotdir+sourcename+'_'+expname+'_nrs1'
-            #slsp1,sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],rate1,brate1,plotbase=plotbase)
             if len(bind1)>0:
                 backslit1 = backdata1.slits[bind1[0]]
-            #sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,ocalhdu1[ind1[0]*10+1],plotbase=plotbase)
             try:
                 sp1 = extract.extract_slit(data1,data1.slits[ind1[0]],backslit1,
                                            applyslitcorr=applyslitcorr,plotbase=plotbase)
@@ -831,7 +912,7 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                     sp1.fluxcorr = fluxcorr2                
             except:
                 traceback.print_exc()
-        # NRS2
+        # ---- NRS2 -----
         print('-NRS2-')        
         slsp2,sp2,backslit2,bind2 = None,None,None,[]
         ind2, = np.where(sourceid2==sourceid)
@@ -839,12 +920,11 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
             bind2, = np.where(bsourceid2==sourceid)        
         if len(ind2)>0:
             plotbase = plotdir+sourcename+'_'+expname+'_nrs2'
-            #slsp2,sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],rate2,brate2,plotbase=plotbase)
             if len(bind2)>0:
                 backslit2 = backdata2.slits[bind2[0]]
-            #sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,ocalhdu2[ind2[0]*10+1],plotbase=plotbase)
             try:
-                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,applyslitcorr=True,plotbase=plotbase)
+                sp2 = extract.extract_slit(data2,data2.slits[ind2[0]],backslit2,
+                                           applyslitcorr=applyslitcorr,plotbase=plotbase)
                 # Apply the flux correction
                 if sp2 is not None and fluxcorr is not None:
                     fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp2.wave)
@@ -856,24 +936,17 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                 
         # Join the two spectra together
         if sp1 is not None and sp2 is not None:
-            #slsp = joinspec(slsp1,slsp2)
             sp = joinspec(sp1,sp2)            
         else:
             if sp1 is not None:
-                #slsp = slsp1
                 sp = sp1                
             if sp2 is not None:
-                #slsp = slsp2
                 sp = sp2                
                 
         # Save the file
         if sp is not None:
             print('Writing to '+outfile)
-            #import pdb; pdb.set_trace()
             sp.write(outfile,overwrite=True)
-            #slsp.write(outfile,overwrite=True)            
-            #sp.write(outfile.replace('_cal.fits','_rate.fits'),overwrite=True)            
-            #slspeclist.append(slsp)
             speclist.append(sp)            
         else:
             dln.touch(outfile)
@@ -885,10 +958,5 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
     if ocalhdu2 is not None: ocalhdu2.close()    
     if backdata1 is not None: backdata1.close()
     if backdata2 is not None: backdata2.close()    
-    #if rate1 is not None: rate1.close()
-    #if rate2 is not None: rate2.close()
-    #if brate1 is not None: brate1.close()
-    #if brate2 is not None: brate2.close()        
-    
-    #return slspeclist,speclist
+
     return speclist
