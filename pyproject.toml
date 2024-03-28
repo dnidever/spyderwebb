@@ -16,6 +16,7 @@ dependencies = [
   "thedoppler",
   "pandas",
   "asdf",
+  "jwst",
 ]
 requires-python = ">=3.8"
 authors = [
