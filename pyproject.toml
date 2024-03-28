@@ -8,15 +8,16 @@ build-backend = "setuptools.build_meta"
 name = "spyderwebb"
 version = "1.0.0"
 dependencies = [
-  "scipy",
-  "numpy",
-  "matplotlib",
-  "astropy",
-  "dill",
-  "dlnpyutils",
-  "thedoppler",
-  "pandas",
-  "asdf",
+  "jwst",
+  #"scipy",
+  #"numpy",
+  #"matplotlib",
+  #"astropy",
+  #"dill",
+  #"dlnpyutils",
+  #"thedoppler",
+  #"pandas",
+  #"asdf",
 ]
 requires-python = ">=3.11"
 authors = [
