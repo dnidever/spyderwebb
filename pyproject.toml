@@ -13,7 +13,7 @@ dependencies = [
   "numpy",
   "matplotlib",
 #  "astropy",
-#  "dlnpyutils",
+  "dlnpyutils",
 #  "thedoppler",
 #  "pandas",
   "asdf",
