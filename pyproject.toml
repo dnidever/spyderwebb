@@ -9,7 +9,7 @@ name = "spyderwebb"
 version = "1.0.0"
 dependencies = [
 #  "scipy",
-  "jwst",
+#  "jwst",
   "numpy",
   "matplotlib",
 #  "astropy",
