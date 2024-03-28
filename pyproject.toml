@@ -9,15 +9,15 @@ name = "spyderwebb"
 version = "1.0.0"
 dependencies = [
   "jwst",
-  #"scipy",
-  #"numpy",
-  #"matplotlib",
-  #"astropy",
-  #"dill",
-  #"dlnpyutils",
-  #"thedoppler",
-  #"pandas",
-  #"asdf",
+  "scipy",
+  "numpy",
+  "matplotlib",
+  "astropy",
+  "dill",
+  "dlnpyutils",
+  "thedoppler",
+  "pandas",
+  "asdf",
 ]
 requires-python = ">=3.11"
 authors = [
