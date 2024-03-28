@@ -21,6 +21,7 @@ dependencies = [
   "sphinx-astropy",
   "thechronos",
   "theborg",
+  "torch",
 ]
 requires-python = ">=3.11"
 authors = [
