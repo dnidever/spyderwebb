@@ -18,6 +18,7 @@ dependencies = [
   "thedoppler",
   "pandas",
   "asdf",
+  "sphinx-astropy",
 ]
 requires-python = ">=3.11"
 authors = [
