@@ -35,8 +35,6 @@ try:
 except ImportError:
     print('ERROR: the documentation requires the sphinx-astropy package to be installed')
     sys.exit(1)
-
-#sys.path.insert(0, os.path.abspath('../python/spyderwebb/'))
     
 # Get configuration information from setup.cfg
 from configparser import ConfigParser
@@ -61,6 +59,8 @@ highlight_language = 'python3'
 # directories to ignore when looking for source files.
 exclude_patterns.append('_templates')
 #exclude_patterns.append('**.ipynb_checkpoints')
+
+autosummary_generate = True
 
 # This is added to the end of RST files - a good place to put substitutions to
 # be used globally.

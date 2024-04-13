@@ -108,6 +108,120 @@ def getexpinfo(obsname,logger=None,redtag='red'):
 
     return edict
 
+
+def getfinalwave(files,order=2):
+    """
+    Determine best final wavelength solution by looking
+    at all of the spectra.
+
+    Parameters
+    ----------
+    files : list
+       List of spVisit files.
+    order : int
+       Order for the dispersion polynomial fit.
+         The full wavelength polynomial fit will be order+1.
+         Default order=2.
+
+    Returns
+    -------
+    wdict : dict
+       Dictionary with final wavelength parameters:
+        "coef" with the coefficients, "npix" with the
+        number of pixels, and "log" of True or False.
+
+    Examples
+    --------
+
+    wdict = getfinalwave(files)
+
+    """
+
+    nfiles = len(files)
+    print('Loading',nfiles,'spVisit spectra')
+    splist = []
+    for f in files:
+        if os.path.exists(f) and os.path.getsize(f)>0:
+            splist.append(doppler.read(f))
+
+    nspec = len(splist)
+    wall = np.array([],float)
+    dwall = np.array([],float)
+    coef = np.array([])
+    yy = np.array([])
+    wmin = np.zeros(nspec,float)+np.nan
+    wmax = np.zeros(nspec,float)+np.nan
+    for i in range(nspec):
+        sp = splist[i]
+        good = (sp.mask==False)
+        if np.sum(good)==0: continue
+        wmin[i] = np.min(sp.wave[good])
+        wmax[i] = np.max(sp.wave[good])
+        if sp.ndim==2:
+            gd1, = np.where(sp.mask[:,0]==False)
+            gd2, = np.where(sp.mask[:,1]==False)
+            dw1 = np.gradient(sp.wave[gd1,0])
+            dw2 = np.gradient(sp.wave[gd2,1])
+            dw = np.hstack((dw1,dw2))
+            w = np.hstack((sp.wave[gd1,0],sp.wave[gd2,1]))
+        else:
+            gd, = np.where(sp.mask==False)
+            dw = np.gradient(sp.wave[gd])
+            w = sp.wave[gd]
+        if hasattr(sp,'ystart1'):
+            ystart = sp.ystart1
+        elif hasattr(sp,'ystart2'):
+            ystart = sp.ystart2
+        else:
+            ystart = sp.ystart
+        coef1 = robust.polyfit(w,dw,order)
+        coef = np.hstack((coef,coef1))
+        dwall = np.hstack((dwall,dw))
+        wall = np.hstack((wall,w))
+        yy = np.hstack((yy,np.zeros(len(w))+ystart))
+
+    # Median wavelength solution
+    coef = coef.reshape(nspec,order+1)
+    # take median of all spectra
+    dwcoef = np.median(coef,axis=0)
+    print('Dispersion coefficients =',dwcoef)
+    
+    # Minimum/maximum values
+    w0 = np.min(wmin)
+    w1 = np.max(wmax)
+    print('Min wavelength =',w0)
+    print('Max wavelength =',w1)
+
+    # Construct  wavelength array using the
+    # dispersion coefficients and w0/w1
+    wave = []
+    count = 0
+    w = w0
+    while (w <= w1):
+        wave.append(w)
+        dw = np.polyval(dwcoef,w)
+        w += dw
+        count += 1
+    wave = np.array(wave)
+
+    # Fit with polynomial
+    wcoef = np.polyfit(np.arange(len(wave)),wave,order+1)
+    # Force the first pixel to be w0
+    wcoef[-1] = w0
+    # Make wavelength to find number of pixels we need to cover w0-w1
+    fwave = np.polyval(wcoef,np.arange(len(wave)+100))
+    gdw, = np.where(fwave <= w1)
+    npix = len(gdw)
+
+    print('Final wavelength coefficients =',wcoef)
+    print('Npixels =',npix)
+    
+    # Final wavelength parameter dictionary
+    wdict = {'coef':wcoef, 'npix':npix, 'log':False}
+
+    return wdict
+            
+
 def joinspec(sp1,sp2):
     """
     Combine NRS1 and NRS2 spectra into one Spec1D object.
@@ -194,7 +308,7 @@ def joinspec(sp1,sp2):
     
     return sp
 
-def stackspec(splist):
+def stackspec(splist,wdict):
     """
     Stack multiple spectra of the same source.
 
@@ -202,6 +316,10 @@ def stackspec(splist):
     ----------
     splist : list
        List of Spec1D spectra of the same object.
+    wdict : dict
+       Dictionary with final wavelength parameters:
+        "coef" with the coefficients, "npix" with the
+        number of pixels, and "log" of True or False.
 
     Returns
     -------
@@ -231,11 +349,12 @@ def stackspec(splist):
     # Array of sinc widths
     nres = [3.5,3.5]
 
-    # wavelength coefficients with linear wavelength steps
-    # 3834 pixels, from 9799.765 to 18797.7624 A
-    wcoef = np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03])
-    nfpix = 3834
+    # Wavelength coefficients
+    wcoef = wdict['coef']
+    nfpix = wdict['npix']
     fwave = np.polyval(wcoef,np.arange(nfpix))
+    if wdict['log']:
+        fwave = 10**fwave
 
     hasfluxcorr = hasattr(splist[0],'fluxcorr')
     
@@ -399,7 +518,7 @@ def stackspec(splist):
     
     return comb,stack
 
-def process(fileinput,outdir='./',clobber=False,applywavecorr=True):
+def process(fileinput,msadir=None,outdir='./',clobber=False,applywavecorr=True):
     """
     Process multiple rate files using JWST calwebb_spec2 pipeline.
     This is the first step of running the SPyderwebb pipeline and
@@ -410,6 +529,9 @@ def process(fileinput,outdir='./',clobber=False,applywavecorr=True):
     fileinput : list
        Glob command for the rate files.  For example,
          "jw02609006001_03101_0000?_nrs?/*_rate.fits".
+    msadir : str, optional
+       Directory of all the msa.fits files.  By default, they are
+         assumed to be in the same directory as the rate.fits files.
     outdir : str, optional
        Main output directory.  Default is "./".
     clobber : bool, optional
@@ -418,7 +540,7 @@ def process(fileinput,outdir='./',clobber=False,applywavecorr=True):
        Apply the JWST cal pipeline wavecorr correction.  Default is True.
 
     Returns
-    -------
+    ------
     Nothing is returned.  Reduced files are written to disk.
 
     Examples
@@ -451,12 +573,12 @@ def process(fileinput,outdir='./',clobber=False,applywavecorr=True):
         if grating=='MIRROR':
             print('NOT a dispersed image')
             continue
-        res = process_exp(filename,outdir=outdir,clobber=clobber,
+        res = process_exp(filename,msadir=msadir,outdir=outdir,clobber=clobber,
                           applywavecorr=applywavecorr)
     
     
 
-def process_exp(filename,outdir='./',clobber=False,applywavecorr=True):
+def process_exp(filename,msadir=None,outdir='./',clobber=False,applywavecorr=True):
     """
     Process exposure image through the JWST calwebb_spec2 pipeline.
 
@@ -468,6 +590,9 @@ def process_exp(filename,outdir='./',clobber=False,applywavecorr=True):
     ----------
     filename : str
        Name of the a single rate file.
+    msadir : str, optional
+       Directory of all the msa.fits files.  By default, they are
+         assumed to be in the same directory as the rate.fits files.
     outdir : str, optional
        Main output directory.  Default is "./".
     clobber : bool, optional
@@ -524,6 +649,9 @@ def process_exp(filename,outdir='./',clobber=False,applywavecorr=True):
     msa_metadata_id = hdu[0].header['MSAMETID']
     dither_position = hdu[0].header['PATT_NUM']
     hdu.close()
+    if msadir is not None:
+        msadir = os.path.abspath(msadir)
+        msa_filename = os.path.join(msadir,msa_filename)
     if os.path.exists(msa_filename)==False:
         msa_filename = os.path.dirname(oldfilename)+'/'+msa_filename
     if os.path.exists(msa_filename)==False:
@@ -594,7 +722,7 @@ def process_exp(filename,outdir='./',clobber=False,applywavecorr=True):
     return result
 
 
-def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
+def reduce(obsname,wdict=None,outdir='./',logger=None,clobber=False,redtag='red',
            noback=False,fluxcorrfile=None,applyslitcorr=True):
     """
     Extract spectra from the JWST NIRSpec MSA data.
@@ -604,6 +732,10 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
     ----------
     obsname : str
        Observation name, i.e. 'jw02609007001_03101'.
+    wdict : dict
+       Dictionary with final wavelength parameters:
+        "coef" with the coefficients, and "npix" with the
+        number of pixels:
     outdir : str, optional
        Output directory name.  Default is the current directory.
     logger : logging object, optional
@@ -631,7 +763,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
     """
 
     fluxcorr = None
-    
+
     if outdir.endswith('/')==False: outdir+='/'
     
     # Get exposures information
@@ -669,7 +801,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
         print(str(nind)+' exposures')
         print('Using output directory: '+odir)
         print('---------------------------------------------') 
-        
+            
         # Loop over exposures and extract the spectra
         slexpspec = []
         expspec = []        
@@ -693,6 +825,35 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             srcname = [s.source_name for s in speclist]
             expspec.append(speclist)            
             sourcenames += srcname
+
+
+        # Final wavelength parameters
+        if wdict is None:
+            # Get filter and grating information
+            calfilename1 = expnames[0]+'_nrs1_'+redtag+'.fits'
+            head = fits.getheader(calfilename1)
+            gratingfilter = head['grating']+'-'+head['filter']
+            if gratingfilter == 'G140H-F100LP':
+                # 9799.71 - 18797.70 Ang
+                # undersampled pixels
+                wdict = {'coef': np.array([-1.35698061e-09, -7.79636391e-06,  2.39732634e+00,  9.79971041e+03]),
+                         'npix': 3834, 'log': False}
+            elif gratingfilter == 'G235M-F170LP':
+                # 16984.25 - 31515.34 Ang
+                # undersampled pixels
+                wdict = {'coef': np.array([-5.57906035e-09, -1.29972541e-05,  1.06802307e+01,  1.69842499e+04]),
+                         'npix': 1365,'log': False}
+            else:
+                print('Do not have final wavelength parameters for grating-filter '+gratinfilter)
+                return
+
+        if 'coef' not in wdict or 'npix' not in wdict or 'log' not in wdict:
+            print('wdict must have coef, npix and log')
+            return
+        print('Wavelength parameters:')
+        print('coef =',wdict['coef'])
+        print('npix =',wdict['npix'])
+        print('log =',wdict['log'])
             
         # Loop over sources
         print('Combining spectra')
@@ -715,7 +876,7 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             # Do the stacking
             if len(splist)>1:
                 print('Combining spectra from multiple exposures')
-                combsp,stack = stackspec(splist)                    
+                combsp,stack = stackspec(splist,wdict)                    
             else:
                 combsp = splist[0]                    
                 
@@ -723,17 +884,22 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
             outfile = stackdir+'/spStack-'+srcname+'_'+redtag+'.fits'
             print('Writing to '+outfile)
             combsp.write(outfile,overwrite=True)
-
+            
             # Save a plot
             backend = matplotlib.rcParams['backend']
             matplotlib.use('Agg')
             fig = plt.figure(figsize=(12,7))
             plt.clf()
             medflux = np.nanmedian(combsp.flux)
+            smflux = dln.medfilt(combsp.flux,51)
+            gdsmflux, = np.where(smflux > 0)
             plt.plot(combsp.wave,combsp.flux)
             plt.xlabel('X')
             plt.ylabel('Flux')
-            plt.ylim(-medflux/3.,1.8*medflux)
+            yr = [np.min(smflux[gdsmflux]), np.max(smflux[gdsmflux])]
+            yr = [yr[0]-0.2*np.ptp(yr), yr[1]+0.2*np.ptp(yr)]
+            # yr = [-medflux/3.,1.8*medflux]
+            plt.ylim(yr)
             plt.savefig(stackplotdir+'/spStack-'+srcname+'_'+redtag+'_flux.png',bbox_inches='tight')
             plt.clf()
             matplotlib.use(backend)  # back to the original backend

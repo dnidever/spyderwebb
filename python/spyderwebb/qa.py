@@ -58,7 +58,7 @@ def qa(obsid,redtag='red'):
     colors = ['#85C1E9','#F5B041','#BB8FCE','#27AE60','#EC7063','#008080']   # blue,orange,purple,green,red,teal
     for e in range(nexp):
         exp = expnames[e]
-        color = colors[e]
+        color = colors[e % len(colors)]
         header += '<th colspan=2 bgcolor='+color+'>Exposure '+str(e+1)+' Image</th>'
     header += '<td align=center>Combined Flux</th>'
     lines += [header]
@@ -74,24 +74,43 @@ def qa(obsid,redtag='red'):
         # Image plots
         for e in range(nexp):
             exp = expnames[e]
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_data.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_data.png" height=200></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_data.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_data.png" height=200></a></td>']
+            if os.path.exists(os.path.abspath(os.path.join(outdir,'../plots/'+starid+'_'+exp+'_nrs1_data.png'))):
+                lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_data.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_data.png" height=200></a></td>']
+            else:
+                lines += ['<td></td>']
+            if os.path.exists(os.path.abspath(os.path.join(outdir,'../plots/'+starid+'_'+exp+'_nrs2_data.png'))):
+                lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_data.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_data.png" height=200></a></td>']
+            else:
+                lines += ['<td></td>']
         lines += ['<td rowspan=3 align=center><a href="../stack/plots/spStack-'+starid+'_'+redtag+'_flux.png"><img src="../stack/plots/spStack-'+starid+'_'+redtag+'_flux.png" height=200></a></td>']
         lines += ['</tr>']
         # PSF plots
         lines += ['<tr>']
         lines += ['<td align=center>PSF</td>']        
         for e in range(nexp):
-            exp = expnames[e]  
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_opsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_opsf.png" height=200></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_opsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_opsf.png" height=200></a></td>']
+            exp = expnames[e]
+            if os.path.exists(os.path.abspath(os.path.join(outdir,'../plots/'+starid+'_'+exp+'_nrs1_opsf.png'))):
+                lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_opsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_opsf.png" height=200></a></td>']
+            else:
+                lines += ['<td></td>']
+            if os.path.exists(os.path.abspath(os.path.join(outdir,'../plots/'+starid+'_'+exp+'_nrs2_opsf.png'))):
+                lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_opsf.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_opsf.png" height=200></a></td>']
+            else:
+                lines += ['<td></td>']
         lines += ['</tr>']            
         # Flux plots
         lines += ['<tr>']
         lines += ['<td align=center>Flux</td>']        
-        for e in range(nexp):            
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_flux.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_flux.png" height=200></a></td>']
-            lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_flux.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_flux.png" height=200></a></td>']
+        for e in range(nexp):
+            exp = expnames[e]
+            if os.path.exists(os.path.abspath(os.path.join(outdir,'../plots/'+starid+'_'+exp+'_nrs1_flux.png'))):
+                lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs1_flux.png"><img src="../plots/'+starid+'_'+exp+'_nrs1_flux.png" height=200></a></td>']
+            else:
+                lines += ['<td></td>']
+            if os.path.exists(os.path.abspath(os.path.join(outdir,'../plots/'+starid+'_'+exp+'_nrs2_flux.png'))):
+                lines += ['<td><a href="../plots/'+starid+'_'+exp+'_nrs2_flux.png"><img src="../plots/'+starid+'_'+exp+'_nrs2_flux.png" height=200></a></td>']
+            else:
+                lines += ['<td></td>']
         lines += ['</tr>']
     
     lines += ['</table>']
