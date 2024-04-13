@@ -97,12 +97,13 @@ def doppler_joint(visitfiles,payne=False,clobber=False,verbose=True):
         return out
     if os.path.exists(outfile): os.remove(outfile)        
 
-    # Load the files
-    spec = []
-    for i in range(len(visitfiles)):
-        sp = readspec(visitfiles[i])
-        spec.append(sp)
     try:
+        # Load the files
+        spec = []
+        for i in range(len(visitfiles)):
+            sp = readspec(visitfiles[i])
+            spec.append(sp)
+
         out = doppler.jointfit(spec,verbose=verbose,payne=payne)
         sumstr, final, model, specmlist = out
         
@@ -147,8 +148,8 @@ def doppler_visit(visitfile,payne=False,estimates=None,verbose=True,clobber=Fals
         return out
     if os.path.exists(outfile): os.remove(outfile)        
 
-    spec = readspec(visitfile)
     try:
+        spec = readspec(visitfile)        
         out,model,specm = doppler.fit(spec,estimates=estimates,verbose=verbose,
                                       figfile=figfile,payne=payne)
         out = Table(out)
@@ -185,8 +186,8 @@ def doppler_stack(stackfile,payne=False,estimates=None,verbose=True,clobber=Fals
     if os.path.getsize(stackfile)==0:
         print(stackfile+' is empty')
         return None    
-    spec = readspec(stackfile)
     try:
+        spec = readspec(stackfile)        
         out,model,specm = doppler.fit(spec,estimates=estimates,verbose=verbose,
                                       figfile=figfile,payne=payne)
         out = Table(out)

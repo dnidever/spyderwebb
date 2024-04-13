@@ -1048,7 +1048,12 @@ def extract_slit(input_model,slit,backslit=None,verbose=False,
     plt.plot(oflux,label='Optimal',linewidth=2)
     plt.plot(gflux,label='Gaussian')
     plt.plot(boxflux,label='Boxcar',linestyle='dashed')
-    plt.ylim(-medflux/3.,1.8*medflux)
+    smflux = dln.medfilt(gflux,51)
+    gdsmflux, = np.where(smflux > 0)
+    yr = [np.min(smflux[gdsmflux]), np.max(smflux[gdsmflux])]
+    yr = [yr[0]-0.2*np.ptp(yr), yr[1]+0.2*np.ptp(yr)]
+    #yr = [-medflux/3.,1.8*medflux]
+    plt.ylim(yr)
     plt.xlabel('X')
     plt.ylabel('Flux')
     plt.legend()
