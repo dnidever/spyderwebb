@@ -282,8 +282,8 @@ class JWSTSyn():
           Array of (1-D) model values for the input xdata and parameters.
           If retmodel==True, then (model,jac) are returned.
 
-        Example
-        -------
+        Examples
+        --------
 
         jac = JWSTSyn.jac(wave,*pars)
 
@@ -367,8 +367,8 @@ class JWSTSyn():
         info : list
            List of dictionaries, one per spectrum, that includes spectra and arrays.
 
-        Example
-        -------
+        Examples
+        --------
 
         tab,info = fit(spec)
 

@@ -119,8 +119,8 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
        Output parameters.  Dictionary with 'wave' and 'flux'.  If a 2D parameter
          is input, then 'flux' will be 2D but 'wave' will still be 1D.
 
-    Example
-    -------
+    Examples
+    --------
 
     out = interp([5000.0, 2.5, -1.2, 0.2])
 
@@ -440,8 +440,8 @@ class FERRE(object):
           Array of (1-D) model values for the input xdata and parameters.
           If retmodel==True, then (model,jac) are returned.
 
-        Example
-        -------
+        Examples
+        --------
 
         jac = ferre.jac(xdata,*pars)
         """
@@ -559,8 +559,8 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
     info : list
        List of dictionaries, one per spectrum, that includes spectra and arrays.
 
-    Example
-    -------
+    Examples
+    --------
 
     tab,info = fit(files,vrel,algor=1,nruns=5)
 
@@ -836,8 +836,8 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
     info : list
        List of dictionaries, one per spectrum, that includes spectra and arrays.
 
-    Example
-    -------
+    Examples
+    --------
 
     tab,info = cfit(files,vrel)
 

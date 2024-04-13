@@ -8,14 +8,22 @@ build-backend = "setuptools.build_meta"
 name = "spyderwebb"
 version = "1.0.0"
 dependencies = [
+  "jwst",
+  "scipy",
   "numpy",
   "matplotlib",
   "astropy",
-  "scipy",
+  "dill",
   "dlnpyutils",
   "thedoppler",
+  "pandas",
+  "asdf",
+  "sphinx-astropy",
+  "thechronos",
+  "theborg",
+  "torch",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 authors = [
   {name = "David Nidever", email = "dnidever@montana.edu"},
 ]

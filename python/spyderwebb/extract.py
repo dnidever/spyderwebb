@@ -211,8 +211,8 @@ def optimalpsf(im,ytrace,err=None,off=10,backoff=50,smlen=31):
     psf : numpy array
        The 2D normalized PSF for the spectral trace.
 
-    Example
-    -------
+    Examples
+    --------
 
     psf = optimalpsf(im,ytrace,err)
 
@@ -294,8 +294,8 @@ def extract_optimal(im,ytrace,imerr=None,verbose=False,off=10,backoff=50,smlen=3
     psf : numpy array
        The 2D normalized PSF for the spectral trace.
 
-    Example
-    -------
+    Examples
+    --------
 
     flux,fluxerr,trace,psf = extract_optimal(im,ytrace,imerr)
 
@@ -408,8 +408,8 @@ def extract_psf(im,psf,err=None,skyfit=True):
     skyerr : numpy array
        Uncertainty in the sky flux array.
 
-    Example
-    -------
+    Examples
+    --------
 
     flux,fluxerr,sky,skyerr = extract_psf(im,psf,imerr,skyfit=True)
 
@@ -478,8 +478,8 @@ def extractcol(im,err,psf):
     fluxerr : numpy array
        Flux uncertainty array.
 
-    Example
-    -------
+    Examples
+    --------
 
     flux,fluxerr = extractcol(im,err,psf)
     
@@ -729,8 +729,8 @@ def extract_slit(input_model,slit,backslit=None,verbose=False,
     sp : Spec1D object
        The fully extracted spectrum as a Spec1D object.
 
-    Example
-    -------
+    Examples
+    --------
 
     sp = extract_slit(input_model,slit,backslit=None,ocalhdu=False)
 

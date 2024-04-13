@@ -124,8 +124,8 @@ def joinspec(sp1,sp2):
     sp : Spec1D object
        Final combined Spec1D spectrum.
 
-    Example
-    -------
+    Examples
+    --------
 
     sp = joinspec(sp1,sp2)
 
@@ -210,8 +210,8 @@ def stackspec(splist):
     stack : Spec1D spectrum
        Resampled individual spectra.
 
-    Example
-    -------
+    Examples
+    --------
 
     comb,stack = stackspec(splist)
 
@@ -418,11 +418,11 @@ def process(fileinput,outdir='./',clobber=False,applywavecorr=True):
        Apply the JWST cal pipeline wavecorr correction.  Default is True.
 
     Returns
-    ------
+    -------
     Nothing is returned.  Reduced files are written to disk.
 
-    Example
-    -------
+    Examples
+    --------
 
     process('jw02609006001_03101_0000?_nrs?/*_rate.fits',outdir='red')
 
@@ -481,8 +481,8 @@ def process_exp(filename,outdir='./',clobber=False,applywavecorr=True):
        Output from the Spec2 pipeline.
     Reduced files are written to disk.
 
-    Example
-    -------
+    Examples
+    --------
 
     result = process_exp('jw02609006001_03101_00002_nrs1/jw02609006001_03101_00002_nrs1_rate.fits')
 
@@ -623,8 +623,9 @@ def reduce(obsname,outdir='./',logger=None,clobber=False,redtag='red',
     -------
     Reduced data are written to files.  Nothing is returned.
 
-    Example
-    -------
+    Examples
+    --------
+
     reduce.reduce('jw02609007001_03101',clobber=True,noback=True)
 
     """
@@ -775,8 +776,8 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
     speclist : list
        List of final Spec1D objects.
 
-    Example
-    -------
+    Examples
+    --------
 
     speclist = extract('jw02609009001_04103_00001',outdir='G140H-F100LP-M31-FINAL-LONG',
                        redtag='red',clobber=True)

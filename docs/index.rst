@@ -38,13 +38,14 @@ The main steps are:
 Tutorial
 ========
 
-Follow the instructions in the `tutorial<tutorial>`_ to run |spyderwebb| on your JWST NIRSpec MSA data.
+Follow the instructions in the tutorial to run |spyderwebb| on your JWST NIRSpec MSA data.
 
 .. toctree::
     :maxdepth: 1
 
     tutorial
-
+    api
+    
 *****
 Index
 *****
