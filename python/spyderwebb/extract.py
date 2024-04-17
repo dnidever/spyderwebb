@@ -720,6 +720,11 @@ def extract_slit(input_model,slit,backslit=None,verbose=False,
        Verbose output to the screen.  Default is False.
     applyslitcorr : bool, optional
        Apply SPyderWebb slit correction to the wavelengths.
+       NOTE, the wavecorr correction in reduce.py applies the slit correction
+       but only to the wavelength array/extension.  But this function does
+       *NOT* use the wavelength array, but instead uses the WCS directly.
+       However, the slit correction applied here should give the same result
+       as the wavecorr correction.
     plotbase : str, optional
        Output base name for the plot.  Default is "extract".
          The diagnostic plot has filename plotbase+'_flux.png"
@@ -1075,16 +1080,24 @@ def extract_slit(input_model,slit,backslit=None,verbose=False,
     rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
     wav = wcs_wl * 1e4
     if applyslitcorr:
-        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (2*srcxpos,2*srcypos))
-        xw = x + xlo + 2*srcxpos
-        yw = otrace + 2*srcypos
+        # We need to use the NEGATIVE of the offset
+        # if the srcxpos is positive and everything moves to the right,
+        # then the wavelength at a fixed position/column is LOWER.
+        dx = -2*srcxpos
+        dy = -2*srcypos
+        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (dx,dy))
+        xw = x + xlo + dx
+        yw = otrace + dy
         rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
+        dw = np.nanmedian(wcs_wl_slitcorr * 1e4 - wav)
         wav = wcs_wl_slitcorr * 1e4
+        print('Applying additive wavelength correction {:.5f} Ang'.format(dw))
     else:
         print('Not applying slit correction')
     dwave = np.gradient(wav)
 
-    #import pdb; pdb.set_trace()
+    # Compare WCS wavelength to wavelength array
+    print('WCS wavelength - wavelength array = {:.5f} Ang'.format(np.nanmedian(wav-owav)))
     
     # Apply slit correction
     # SLIT correction, srcxpos is source position in slit

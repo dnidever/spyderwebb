@@ -538,6 +538,9 @@ def process(fileinput,msadir=None,outdir='./',clobber=False,applywavecorr=True):
        Overwrite any existing files.
     applywavecorr : bool, optional
        Apply the JWST cal pipeline wavecorr correction.  Default is True.
+       NOTE, the wavelength used in extract.extract_slit() uses the WCS
+       and *NOT* the wavelength array/extension which applywavecorr affects.
+       The applyslitcorr parameter in extract.py controls the slit correction.
 
     Returns
     ------
