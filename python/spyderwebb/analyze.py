@@ -221,14 +221,14 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     vstarids = [v[:v.find('_jw')] for v in vstarids]
     vstarids = np.char.array(vstarids)
     nvisits = len(visitfiles)
-
+    
     # Get the list of Stacked files    
     stackfiles = np.char.array(glob(obsid+'/stack/spStack-*_'+redtag+'.fits*'))
     starids = [os.path.basename(c)[8:-len(redtag)-6] for c in stackfiles if os.path.getsize(c)>0]
     starids = np.char.array(starids)
     nstars = len(starids)
     print(nstars,' stars')
-
+    
     # Loop over the stars
     slist = {}
     vlist = {}
@@ -245,8 +245,10 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
             vout = doppler_visit(vfiles[j],clobber=clobber)
             vlist[vfiles[j]]= vout
             if payne:
-                estimates = {'TEFF':vout['teff'][0],'LOGG':vout['logg'][0],'FE_H':vout['feh'][0],'RV':vout['vrel'][0]}
-                vout_payne = doppler_visit(vfiles[j],clobber=clobber,payne=True,estimates=estimates)
+                estimates = {'TEFF':vout['teff'][0],'LOGG':vout['logg'][0],
+                             'FE_H':vout['feh'][0],'RV':vout['vrel'][0]}
+                vout_payne = doppler_visit(vfiles[j],clobber=clobber,
+                                           payne=True,estimates=estimates)
                 
         # Run doppler with joint on visits
         if len(vind)>1:
@@ -259,36 +261,40 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
         sout = doppler_stack(sfiles,clobber=clobber)
         slist[starid] = sout
         if payne:
-            estimates = {'TEFF':sout['teff'][0],'LOGG':sout['logg'][0],'FE_H':sout['feh'][0],'RV':sout['vrel'][0]}
-            sout_payne = doppler_stack(sfiles,clobber=clobber,payne=True,estimates=estimates)        
+            estimates = {'TEFF':sout['teff'][0],'LOGG':sout['logg'][0],
+                         'FE_H':sout['feh'][0],'RV':sout['vrel'][0]}
+            sout_payne = doppler_stack(sfiles,clobber=clobber,
+                                       payne=True,estimates=estimates)        
 
-            
     # Create visit catalog
-    dt = [('starid',str,50),('visitfile',str,200),('id',str,50),('vhelio',float),('vrel',float),('vrelerr',float),
-          ('teff',float),('tefferr',float),('logg',float),('loggerr',float),('feh',float),('feherr',float),
+    dt = [('starid',str,50),('visitfile',str,200),('id',str,50),('vhelio',float),
+          ('vrel',float),('vrelerr',float),('teff',float),('tefferr',float),
+          ('logg',float),('loggerr',float),('feh',float),('feherr',float),
           ('chisq',float),('bc',float),('snr',float),('success',bool)]
     vtab = np.zeros(len(vlist),dtype=np.dtype(dt))
     for i,k in enumerate(vlist.keys()):
         vout = vlist[k]
         # G140H-F100LP-M31-FINAL-LONG/spVisit-2609_268389_jw02609009001_04107_00001_red.fits
         vfile = os.path.basename(k)
-        starid = k[8:]
+        starid = vfile[8:]
         starid = '_'.join(starid.split('_')[0:2])
         vtab['starid'][i] = starid
         vtab['id'][i] = starid.split('_')[1]            
-        vtab['visitfile'][i] = vfile
+        vtab['visitfile'][i] = k  #vfile
         if vout is None:
             vtab['success'][i] = False
         else:
             for n in vout.dtype.names:
-                if n in vout.columns:
+                if n in vtab.dtype.names:
                     vtab[n][i] = vout[n][0]
             vtab['success'][i] = True
     vtab = Table(vtab)
-            
+    
     # Create stack catalog
-    dt = [('starid',str,50),('id',str,50),('vhelio',float),('vrel',float),('vrelerr',float),('teff',float),('tefferr',float),
-          ('logg',float),('loggerr',float),('feh',float),('feherr',float),('chisq',float),('bc',float),('snr',float),('success',bool)]
+    dt = [('starid',str,50),('id',str,50),('vhelio',float),('vrel',float),
+          ('vrelerr',float),('teff',float),('tefferr',float),
+          ('logg',float),('loggerr',float),('feh',float),('feherr',float),
+          ('chisq',float),('bc',float),('snr',float),('success',bool)]
     tab = np.zeros(len(slist),dtype=np.dtype(dt))
     for i,k in enumerate(slist.keys()):
         out = slist[k]
@@ -297,13 +303,34 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
             tab['success'][i] = False
         else:
             for n in out.dtype.names:
-                if n in out.columns:
+                if n in tab.dtype.names:
                     tab[n][i] = out[n][0]
             tab['starid'][i] = k
             tab['id'][i] = k.split('_')[1]
             tab['success'][i] = True
     tab = Table(tab)
 
+    # Create joint catalog
+    dt = [('starid',str,50),('id',str,50),('vhelio',float),('vscatter',float),
+          ('verr',float),('teff',float),('tefferr',float),
+          ('logg',float),('loggerr',float),('feh',float),('feherr',float),
+          ('chisq',float),('medsnr',float),('totsnr',float),
+          ('success',bool)]
+    jtab = np.zeros(len(jlist),dtype=np.dtype(dt))
+    for i,k in enumerate(jlist.keys()):
+        out = jlist[k]
+        if out is None:
+            jtab['starid'][i] = k
+            jtab['success'][i] = False
+        else:
+            out = out[0]  # first element is the catalog
+            for n in out.dtype.names:
+                if n in jtab.dtype.names:
+                    jtab[n][i] = out[n]
+            jtab['starid'][i] = k
+            jtab['id'][i] = k.split('_')[1]
+            jtab['success'][i] = True
+    jtab = Table(jtab)
 
     # Add targeting information
     if targfile is not None:
@@ -314,6 +341,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
         if 'id' not in targs.columns:
             targs['id'] = np.arange(len(targs))+2  # APT has first ID as 2
 
+        # Match to stacked table
         ind1,ind2 = dln.match(tab['id'],targs['id'])
         print(len(ind1),' matches to targeting catalog')
         # Add the new columns
@@ -322,6 +350,15 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
                 if k not in tab.columns:
                     tab.add_column(Column(name=k,dtype=targs[k].dtype,length=len(tab)))
                     tab[k][ind1] = targs[k][ind2]
+        # Match to joint table
+        ind1,ind2 = dln.match(jtab['id'],targs['id'])
+        print(len(ind1),' matches to targeting catalog')
+        # Add the new columns
+        if len(ind1)>0:
+            for k in targs.columns:
+                if k not in jtab.columns:
+                    jtab.add_column(Column(name=k,dtype=targs[k].dtype,length=len(jtab)))
+                    jtab[k][ind1] = targs[k][ind2]                    
 
     # Add other catalog information
     if photfile is not None:
@@ -329,6 +366,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
         phot = Table.read(photfile)
         for c in phot.colnames: phot[c].name = c.lower()
 
+        # Match to stacked table
         ind1,ind2,dist = coords.xmatch(tab['ra'],tab['dec'],phot['ra'],phot['dec'],0.5)
         print(len(ind1),' matches to photometry catalog')
         # Add the new columns
@@ -337,8 +375,17 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
                 if k not in tab.columns:
                     tab.add_column(Column(name=k,dtype=phot[k].dtype,length=len(tab)))
                     tab[k][ind1] = phot[k][ind2]
+        # Match to joint table
+        ind1,ind2,dist = coords.xmatch(jtab['ra'],jtab['dec'],phot['ra'],phot['dec'],0.5)
+        print(len(ind1),' matches to photometry catalog')
+        # Add the new columns
+        if len(ind1)>0:        
+            for k in phot.columns:
+                if k not in jtab.columns:
+                    jtab.add_column(Column(name=k,dtype=phot[k].dtype,length=len(jtab)))
+                    jtab[k][ind1] = phot[k][ind2]                    
                     
-    return tab,vtab
+    return tab,vtab,jtab
 
 
 def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0,
