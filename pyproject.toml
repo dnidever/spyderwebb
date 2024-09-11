@@ -23,7 +23,8 @@ dependencies = [
   "theborg",
   "torch",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.9"
+#requires-python = ">=3.11"
 authors = [
   {name = "David Nidever", email = "dnidever@montana.edu"},
 ]
