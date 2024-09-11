@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 name = "spyderwebb"
 version = "1.0.0"
 dependencies = [
-  "jwst",
+#  "jwst",
   "scipy",
   "numpy",
   "matplotlib",

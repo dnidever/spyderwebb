@@ -2,4 +2,4 @@ numpy
 matplotlib
 astropy
 scipy
-jwst
+#jwst
