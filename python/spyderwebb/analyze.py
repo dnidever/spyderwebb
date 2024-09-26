@@ -7,6 +7,8 @@ from doppler import spec1d
 from astropy.table import Table,hstack,Column
 from astropy.io import fits
 from chronos import isochrone
+from pwd import getpwuid
+from grp import getgrgid
 import shutil
 import subprocess
 import tempfile
@@ -337,9 +339,9 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
     # Add targeting information
     if targfile is not None:
         targs = Table.read(targfile)
-        #for c in targs.colnames: targs[c].name = c.lower()
         if 'MSAID' in targs.columns:
             targs['id'] = targs['MSAID']
+        for c in targs.colnames: targs[c].name = c.lower()
         if 'id' not in targs.columns:
             targs['id'] = np.arange(len(targs))+2  # APT has first ID as 2
 
@@ -488,9 +490,11 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     if len(slist)==0:
         print('No spectra to fit')
         return None,None
-        
-    gridfile = '/Users/nidever/synspec/winter2017/jwst/'+grid
-    ferre = '/Users/nidever/projects/ferre/bin/ferre'
+
+    username = getpwuid(os.getuid())[0]
+    homedir = os.path.expanduser('~'+username)
+    gridfile = os.path.join(homedir,'synspec','jwst',grid)
+    ferre = os.path.join(homedir,'projects','ferre','bin','ferre')
 
     # Set up temporary directory
     tmpdir = tempfile.mkdtemp(prefix='ferre')
