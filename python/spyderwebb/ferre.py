@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import traceback
 import shutil
+from pwd import getpwuid
 from dlnpyutils import utils as dln
 from scipy.optimize import curve_fit
 from theborg import emulator
@@ -126,11 +127,13 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
 
     """
 
+    username = getpwuid(os.getuid())[0]
+    homedir = os.path.expanduser('~'+username)
     if griddir is None:
-        griddir = '/Users/nidever/synspec/winter2017/jwst/'
-    gridfile = griddir+grid
+        griddir = os.path.join(homedir,'synspec','jwst')
+    gridfile = os.path.join(griddir,grid)
     if ferresrc is None:
-        ferresrc = '/Users/nidever/projects/ferre/bin/ferre'
+        ferresrc = os.path.join(homedir,'projects','ferre','bin','ferre')
     info = gridinfo(gridfile)
 
     # Number of objects
@@ -228,7 +231,7 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
 
 class FERRE(object):
 
-    def __init__(self,grid='jwstgiant4.dat',outwave=None,cnorder=6,cperclevel=90.0,cbinsize=0.1,
+    def __init__(self,grid='jwstgiant5.dat',outwave=None,cnorder=6,cperclevel=90.0,cbinsize=0.1,
                  loggrelation=False,verbose=False):
         """
         outwave: output wavelength array.  By default, the full grid wavelength array will be used.
@@ -236,8 +239,13 @@ class FERRE(object):
         cperclevel: continuum normalization percentile level for bins.  Default is 90.
         cbinsize: continuum normalization fractional wavelength range (from -1 to 1) to bin.  Default is 0.1.
         """
-        gridfile = '/Users/nidever/synspec/winter2017/jwst/'+grid
-        ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
+        username = getpwuid(os.getuid())[0]
+        homedir = os.path.expanduser('~'+username)    
+        griddir = os.path.join(homedir,'synspec','jwst')
+        gridfile = os.path.join(griddir,grid)
+        ferre = os.path.join(homedir,'projects','ferre','bin','ferre')
+        #gridfile = '/Users/nidever/synspec/jwst/'+grid
+        #ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
         info = gridinfo(gridfile)
         self.grid = grid
         self.gridfile = gridfile
@@ -497,7 +505,7 @@ class FERRE(object):
 
     
 def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
-        cont=1,ncont=0,errbar=1,grid='jwstgiant4.dat',save=False):
+        cont=1,ncont=0,errbar=1,grid='jwstgiant5.dat',save=False):
     """ 
     Run FERRE on list of spectra
 
@@ -565,9 +573,14 @@ def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
     tab,info = fit(files,vrel,algor=1,nruns=5)
 
     """
-        
-    gridfile = '/Users/nidever/synspec/winter2017/jwst/'+grid
-    ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
+
+    username = getpwuid(os.getuid())[0]
+    homedir = os.path.expanduser('~'+username)    
+    griddir = os.path.join(homedir,'synspec','jwst')
+    gridfile = os.path.join(griddir,grid)
+    ferre = os.path.join(homedir,'projects','ferre','bin','ferre')
+    #gridfile = '/Users/nidever/synspec/jwst/'+grid
+    #ferre = '/Users/nidever/projects/ferre/bin/ferre.x'
 
     # Set up temporary directory
     tmpdir = tempfile.mkdtemp(prefix='ferre')
@@ -804,7 +817,7 @@ def specprep(spec,vrel=None):
     return out
 
 
-def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant4.dat',
+def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant5.dat',
          initgrid=True,outlier=True,verbose=False):
     """ 
     Fit spectrum with curve_fit running FERRE to get the models

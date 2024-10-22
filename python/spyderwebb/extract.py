@@ -699,7 +699,180 @@ def fix_outliers(im,err=None,nsigma=5,nfilter=11,niter=3):
         return outim,outerr
     else:
         return outim
+
+def get_wavelength(slit,trace,kind):
+    """
+    Get the slit wavelength
+    """
+
+    # Slit offsets
+    srcxpos = slit.source_xpos
+    srcypos = slit.source_ypos
+
+    nx = len(trace)
+    x = np.arange(nx)
+
+    # Clip the X ends
+    #  sometimes there are fully masked columns at the ends
+    goodpix, = np.where((np.sum(np.isfinite(slit.data),axis=0)>0) & (np.sum(slit.err>0,axis=0)>0) &
+                        (np.sum(np.isfinite(slit.wavelength),axis=0)>0))
+    if len(goodpix)==0:
+        print('No good pixels')
+        return None
+    xlo = goodpix[0]
+    xhi = goodpix[-1]
+
+    # 4 options
+    # 1) use wavelength array
+    # 2) Use wcs with centered slit and constant offset (original version)
+    # 3) Use wcs with centered slit and wavelength-varying offset
+    # 4) Use wcs with offset slit position
+    # 5) Use wcs with adjusted slit position (for adjusted y trace)
+
+    # Calculate the detector offsets based on the slit offsets
+    #   This is NOT a constant value.  It changes with wavelength (slightly).
+    slit2detector = slit.meta.wcs.get_transform('slit_frame', 'detector')
+    # call the transform like this: detx,dety=slit2detector(slitx,slity,wavelength[m])
+    lam = np.linspace(slit.meta.wcsinfo.waverange_start,slit.meta.wcsinfo.waverange_end,5000)
+    x0,y0 = slit2detector(0+np.zeros(5000),0+np.zeros(5000),lam)   # centered in slit
+    #x0 -= xlo  # correct for any trimming that we did of the image
+    x1,y1 = slit2detector(srcxpos+np.zeros(5000),srcypos+np.zeros(5000),lam)
+    #x1 -= xlo  # correct for any trimming that we did of the image
+    gd, = np.where((x0 >= slit.xstart) & (x0 <= slit.xstart+slit.xsize))
+    x0,y0,x1,y1 = x0[gd],y0[gd],x1[gd],y1[gd]
+    xshift0 = x1-x0
+    yshift0 = y1-y0
+    xw = x + xlo  # full-image pixel values
+    xshift = dln.interp(x1,xshift0,xw,kind='quadratic',assume_sorted=False)
+    yshift = dln.interp(x1,yshift0,xw,kind='quadratic',assume_sorted=False)
+    
+    # 1) Use wavelength array along trace
+    #------------------------------------
+    ny,_ = slit.wavelength.shape
+    y = np.arange(ny)
+    if kind==1:
+        print('Wavelength calculation 1')
+        print('Use wavelength array along trace')
+        wav = np.zeros(nx,float)
+        for i in range(nx):
+            good = np.isfinite(slit.wavelength[:,xlo+i])
+            w1 = dln.interp(y[good],slit.wavelength[good,xlo+i],trace[i],kind='quadratic',assume_sorted=False)
+            wav[i] = w1*1e4
+            
+    # 2) Use wcs with centered slit and constant offset (original version)
+    #---------------------------------------------------------------------    
+    elif kind==2:
+        print('Wavelength calculation 2')
+        print('Use wcs with centered slit and constant offset (original version)')
+        print('srcxpos =',srcxpos)
+        print('srcypos =',srcypos)        
         
+        # Get wavelengths using the trace and WCS object
+        xw = x + xlo
+        yw = trace
+        # wcs() is the same as detector2world()        
+        rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
+        wav1 = wcs_wl * 1e4
+        # We need to use the NEGATIVE of the offset
+        # if the shift on the detector (from slit offset) is positive, then
+        # everything moves to the right,
+        # But the wavelength at a fixed position/column is LOWER.
+        dx = -2*srcxpos
+        dy = -2*srcypos
+        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (dx,dy))
+        xw = x + xlo + dx
+        yw = trace + dy
+        rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
+        dw = np.nanmedian(wcs_wl_slitcorr * 1e4 - wav1)
+        wav = wcs_wl_slitcorr * 1e4
+        print('Applying additive wavelength correction {:.5f} Ang'.format(dw))
+        
+    # 3) Use wcs with centered slit and wavelength-varying offset
+    #------------------------------------------------------------ 
+    elif kind==3:
+        print('Wavelength calculation 3')
+        print('Use wcs with centered slit and wavelength-varying offset')
+        print('Median xshift =',np.nanmedian(xshift))
+        print('Median yshift =',np.nanmedian(yshift))        
+        
+        # Get wavelengths using the trace and WCS object
+        xw = x + xlo
+        yw = trace
+        # wcs() is the same as detector2world()
+        rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
+        wav1 = wcs_wl * 1e4
+        # We need to use the NEGATIVE of the offset
+        # if the shift on the detector (from slit offset) is positive, then
+        # everything moves to the right,
+        # But the wavelength at a fixed position/column is LOWER.
+        dx = -np.nanmedian(xshift)
+        dy = -np.nanmedian(yshift)
+        print('flippying sign')
+        dx *= -1
+        dy *= -1
+        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (dx,dy))
+        xw = x + xlo + dx
+        yw = trace + dy
+        rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
+        dw = np.nanmedian(wcs_wl_slitcorr * 1e4 - wav1)
+        wav = wcs_wl_slitcorr * 1e4
+        print('Applying additive wavelength correction {:.5f} Ang'.format(dw))
+
+    # 4) Use wcs slit2detector with offset slit position
+    #---------------------------------------------------
+    elif kind==4:
+        print('Wavelength calculation 4')
+        print('Use wcs slit2detector with offset slit position')
+        
+        # Another thing we could do is get a large x/y/wave array for our slit position
+        # and then interpolate to the actual X columns that we want
+        lam = np.linspace(slit.meta.wcsinfo.waverange_start,slit.meta.wcsinfo.waverange_end,5000)
+        xtr,ytr = slit2detector(slit.source_xpos+np.zeros(5000),slit.source_ypos+np.zeros(5000),lam)
+        #  trim
+        gd, = np.where((xtr >= xlo) & (xtr <= xhi))
+        xtr,ytr,lam = xtr[gd],ytr[gd],lam[gd]
+        #  interpolate
+        xwtr = x + xlo
+        ywtr = dln.interp(xtr,ytr,xw,kind='quadratic',assume_sorted=False)
+        wavtr = dln.interp(xtr,lam,xw,kind='quadratic',assume_sorted=False) * 1e10    
+        wav = wavtr
+
+    # 5) Use wcs slit2detector with adjusted slit position (for adjusted y trace)
+    #----------------------------------------------------------------------------
+    elif kind==5:
+        print('Wavelength calculation 5')
+        print('Use wcs slit2detector with adjusted slit position (for adjusted y trace)')
+        
+        # Convert trace Y offset into a slit offset
+        detector2slit = slit.meta.wcs.get_transform('detector', 'slit_frame')
+        sx,sy,ls = detector2slit(x+xlo,trace)
+        # sx is ALWAYS zero
+        newsrcypos = np.nanmedian(sy)
+        print('Old slit y-position:',srcypos)
+        print('New trace-offset slit y-position:',newsrcypos)
+    
+        # Now get the wavelengths at the ADJUSTED slit position
+        lam = np.linspace(slit.meta.wcsinfo.waverange_start,slit.meta.wcsinfo.waverange_end,5000)
+        xtr,ytr = slit2detector(slit.source_xpos+np.zeros(5000),newsrcypos+np.zeros(5000),lam)
+        #  trim to values on the slit image
+        gd, = np.where((xtr >= xlo) & (xtr <= xhi))
+        xtr,ytr,lam = xtr[gd],ytr[gd],lam[gd]
+        #  interpolate
+        xwtr = x + xlo
+        ywtr = dln.interp(xtr,ytr,xw,kind='quadratic',assume_sorted=False)
+        wavtr = dln.interp(xtr,lam,xw,kind='quadratic',assume_sorted=False) * 1e10    
+        wav = wavtr
+
+    else:
+        print(kind,'not supported')
+        import pdb; pdb.set_trace()
+    
+    #import pdb; pdb.set_trace()
+
+    print(wav[:2])
+    
+    return wav
+
 
 def extract_slit(input_model,slit,backslit=None,verbose=False,
                  applyslitcorr=True,plotbase='extract'):
@@ -1073,31 +1246,106 @@ def extract_slit(input_model,slit,backslit=None,verbose=False,
     # Slit offsets
     srcxpos = slit.source_xpos
     srcypos = slit.source_ypos
-    
-    # Get wavelengths using the trace and WCS object
-    xw = x + xlo
-    yw = otrace
-    rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
-    wav = wcs_wl * 1e4
-    if applyslitcorr:
-        # We need to use the NEGATIVE of the offset
-        # if the srcxpos is positive and everything moves to the right,
-        # then the wavelength at a fixed position/column is LOWER.
-        dx = -2*srcxpos
-        dy = -2*srcypos
-        print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (dx,dy))
-        xw = x + xlo + dx
-        yw = otrace + dy
-        rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
-        dw = np.nanmedian(wcs_wl_slitcorr * 1e4 - wav)
-        wav = wcs_wl_slitcorr * 1e4
-        print('Applying additive wavelength correction {:.5f} Ang'.format(dw))
-    else:
-        print('Not applying slit correction')
-    dwave = np.gradient(wav)
 
+    # Get the wavelengths
+    wav1 = get_wavelength(slit,otrace,1)
+    wav2 = get_wavelength(slit,otrace,2)
+    wav3 = get_wavelength(slit,otrace,3)
+    wav4 = get_wavelength(slit,otrace,4)
+    wav5 = get_wavelength(slit,otrace,5)
+
+    print('wav2-wav1=',np.nanmedian(wav2-wav1))
+    print('wav3-wav1=',np.nanmedian(wav3-wav1))
+    print('wav4-wav1=',np.nanmedian(wav4-wav1))
+    print('wav5-wav1=',np.nanmedian(wav5-wav1))
+
+    #import pdb; pdb.set_trace()
+
+    wav = get_wavelength(slit,otrace,3)
+    
+    ## Calculate the detector offsets based on the slit offsets
+    ##   This is NOT a constant value.  It changes with wavelength (slightly).
+    #slit2detector = slit.meta.wcs.get_transform('slit_frame', 'detector')
+    ## call the transform like this: detx,dety=slit2detector(slitx,slity,wavelength[m])
+    #lam = np.linspace(slit.meta.wcsinfo.waverange_start,slit.meta.wcsinfo.waverange_end,5000)
+    #x0,y0 = slit2detector(0+np.zeros(5000),0+np.zeros(5000),lam)   # centered in slit
+    ##x0 -= xlo  # correct for any trimming that we did of the image
+    #x1,y1 = slit2detector(srcxpos+np.zeros(5000),srcxpos+np.zeros(5000),lam)
+    ##x1 -= xlo  # correct for any trimming that we did of the image
+    #gd, = np.where((x0 >= slit.xstart) & (x0 <= slit.xstart+slit.xsize))
+    #x0,y0,x1,y1 = x0[gd],y0[gd],x1[gd],y1[gd]
+    #xshift0 = x1-x0
+    #yshift0 = y1-y0
+    #xw = x + xlo  # full-image pixel values
+    #xshift = dln.interp(x1,xshift0,xw,kind='quadratic',assume_sorted=False)
+    #yshift = dln.interp(x1,yshift0,xw,kind='quadratic',assume_sorted=False)    
+    
+    ## Another thing we could do is get a large x/y/wave array for our slit position
+    ## and then interpolate to the actual X columns that we want
+    #lam = np.linspace(slit.meta.wcsinfo.waverange_start,slit.meta.wcsinfo.waverange_end,5000)
+    #xtr,ytr = slit2detector(slit.source_xpos+np.zeros(5000),slit.source_ypos+np.zeros(5000),lam)
+    ##  trim
+    #gd, = np.where((xtr >= xlo) & (xtr <= xhi))
+    #xtr,ytr,lam = xtr[gd],ytr[gd],lam[gd]
+    ##  interpolate
+    #xwtr = x + xlo
+    #ywtr = dln.interp(xtr,ytr,xw,kind='quadratic',assume_sorted=False)
+    #wavtr = dln.interp(xtr,lam,xw,kind='quadratic',assume_sorted=False) * 1e10    
+    #wav1 = wavtr
+    
+    ## Convert trace Y offset into a slit offset
+    #detector2slit = slit.meta.wcs.get_transform('detector', 'slit_frame')
+    #sx,sy,ls = detector2slit(x+xlo,otrace)
+    ## sx is ALWAYS zero
+    #newsrcypos = np.nanmedian(sy)
+    ##print('Old slit y-position:',srcypos)
+    ##print('New trace-offset slit y-position:',newsrcypos)
+    
+    ## Now get the wavelengths at the ADJUSTED slit position
+    #lam = np.linspace(slit.meta.wcsinfo.waverange_start,slit.meta.wcsinfo.waverange_end,5000)
+    #xtr,ytr = slit2detector(slit.source_xpos+np.zeros(5000),newsrcypos+np.zeros(5000),lam)
+    ##  trim to values on the slit image
+    #gd, = np.where((xtr >= xlo) & (xtr <= xhi))
+    #xtr,ytr,lam = xtr[gd],ytr[gd],lam[gd]
+    ##  interpolate
+    #xwtr = x + xlo
+    #ywtr = dln.interp(xtr,ytr,xw,kind='quadratic',assume_sorted=False)
+    #wavtr = dln.interp(xtr,lam,xw,kind='quadratic',assume_sorted=False) * 1e10    
+    #wav2 = wavtr
+    
+    # Still a little bit off at the ~0.2A level, maybe because the Y values of the trace
+    # are off by a bit.  doesn't seem large enough
+    # Part of this must be that the shift is NOT A CONSTANT VALUE but changes with wavelength
+    
+    # The conversion factor from slit to pixels is around -2.3x
+    
+    ## Get wavelengths using the trace and WCS object
+    #xw = x + xlo
+    #yw = otrace
+    #rr,dd,wcs_wl = slit.meta.wcs(xw,yw)
+    #wav = wcs_wl * 1e4
+    #if applyslitcorr:
+    #    # We need to use the NEGATIVE of the offset
+    #    # if the shift on the detector (from slit offset) is positive, then
+    #    # everything moves to the right,
+    #    # But the wavelength at a fixed position/column is LOWER.
+    #    dx = -np.nanmedian(xshift)
+    #    dy = -np.nanmedian(yshift)
+    #    print('Applying slit correction (X,Y): (%.2f,%.2f) pixels' % (dx,dy))
+    #    xw = x + xlo + dx
+    #    yw = otrace + dy
+    #    rr,dd,wcs_wl_slitcorr = slit.meta.wcs(xw,yw)
+    #    dw = np.nanmedian(wcs_wl_slitcorr * 1e4 - wav)
+    #    wav3 = wcs_wl_slitcorr * 1e4
+    #    print('Applying additive wavelength correction {:.5f} Ang'.format(dw))
+    #else:
+    #    print('Not applying slit correction')
+    dwave = np.gradient(wav)
+    
     # Compare WCS wavelength to wavelength array
-    print('WCS wavelength - wavelength array = {:.5f} Ang'.format(np.nanmedian(wav-owav)))
+    #print('WCS wavelength - wavelength array = {:.5f} Ang'.format(np.nanmedian(wav-owav)))
+
+    #import pdb; pdb.set_trace()
     
     # Apply slit correction
     # SLIT correction, srcxpos is source position in slit

@@ -8,7 +8,6 @@ from astropy.table import Table,hstack,Column
 from astropy.io import fits
 from chronos import isochrone
 from pwd import getpwuid
-from grp import getgrgid
 import shutil
 import subprocess
 import tempfile
@@ -269,7 +268,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
                          'FE_H':sout['feh'][0],'RV':sout['vrel'][0]}
             sout_payne = doppler_stack(sfiles,clobber=clobber,
                                        payne=True,estimates=estimates)        
-
+            
     # Create visit catalog
     dt = [('starid',str,50),('visitfile',str,200),('id',str,50),('vhelio',float),
           ('vrel',float),('vrelerr',float),('teff',float),('tefferr',float),
@@ -344,7 +343,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
         for c in targs.colnames: targs[c].name = c.lower()
         if 'id' not in targs.columns:
             targs['id'] = np.arange(len(targs))+2  # APT has first ID as 2
-
+            
         # Match to stacked table
         ind1,ind2 = dln.match(tab['id'],targs['id'])
         print(len(ind1),' matches to targeting catalog')

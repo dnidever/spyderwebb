@@ -1079,7 +1079,10 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                     fluxcorr2 = dln.interp(fluxcorr['wave'],fluxcorr['flux'],sp1.wave)
                     sp1.flux /= fluxcorr2
                     sp1.err /= fluxcorr2                    
-                    sp1.fluxcorr = fluxcorr2                
+                    sp1.fluxcorr = fluxcorr2
+            except KeyboardInterrupt:
+                print("Ctrl-C pressed!")
+                return
             except:
                 traceback.print_exc()
         # ---- NRS2 -----
@@ -1101,6 +1104,9 @@ def extractexp(expname,backexpname=None,logger=None,outdir='./',clobber=False,
                     sp2.flux /= fluxcorr2
                     sp2.err /= fluxcorr2                    
                     sp2.fluxcorr = fluxcorr2
+            except KeyboardInterrupt:
+                print("Ctrl-C pressed!")
+                return                    
             except:
                 traceback.print_exc()
                 
