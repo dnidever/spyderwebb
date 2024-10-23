@@ -200,13 +200,19 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
     # Run FERRE
     if os.path.exists('ferre.mdl'): os.remove('ferre.mdl')
     try:
-        result = subprocess.check_output([ferresrc],stderr=subprocess.STDOUT)
+        #result = subprocess.check_output([ferresrc],stderr=subprocess.STDOUT)
+        result = subprocess.run([ferresrc],capture_output=True)
     except:
         #traceback.print_exc()
         pass
+
+    if os.path.exists('ferre.mdl')==False:
+        raise ValueError('ferre.mdl not found in '+tmpdir)
     
     # Read the output
     mlines = dln.readlines('ferre.mdl')
+    if len(mlines)==0:
+        raise ValueError('ferre.mdl is blank')
     if nobj==1:
         mlines = mlines[0]
         mflux = np.array(mlines.split()).astype(float)
