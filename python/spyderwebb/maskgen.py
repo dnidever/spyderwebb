@@ -17,13 +17,80 @@ from stdatamodels.jwst.transforms.models import (Rotation3DToGWA, DirCos2Unitles
 
 # JWST data models
 from jwst import datamodels
-from jwst.assign_wcs import pointing,nirspec,load_wcs,assign_wcs
+from jwst.assign_wcs import pointing,nirspec,assign_wcs
 from stpipe import crds_client
 from astropy.modeling import models
 
 # Generate JWST NIRSpec MSA masks
 
+MSA2SLIT_COEF = np.array([[[ 4.07470547e+02,  9.52495217e+03, -4.15835866e+00],
+                           [ 2.06309383e+02,  2.14492760e+00,  4.91307616e+03]],
+                          [[ 4.08780083e+02,  9.52539935e+03, -2.87903952e+00],
+                           [-3.46119764e+01,  1.48525568e+00,  4.91401850e+03]],
+                          [[-4.28486131e+01,  9.52546438e+03, -2.24981142e+00],
+                           [ 2.06226763e+02,  1.16034868e+00,  4.91279401e+03]],
+                          [[-4.28366954e+01,  9.52592872e+03, -2.22355660e+00],
+                           [-3.46210821e+01,  1.14709013e+00,  4.91424362e+03]]])
 
+def slitpositions(msa):
+    """
+    Get MSA positions for all of the slits/shutters
+    """
+
+    slit_y_range = [-.55, .55]
+
+    sdata = []
+    # Loop over quadrants
+    for q in range(1,5):
+        msa_quadrant = msa['Q'+str(q)]
+        msa_model = msa_quadrant['model']
+        msa_data = msa_quadrant['data']
+        for s in range(len(msa_data)):
+            slitdata = msa_data[s]
+            num, xcenter, ycenter, xsize, ysize = slitdata
+            # Slit('S1600A1', 3, 0, 0, 0, slit_y_range[0], slit_y_range[1], 5, 1)
+            #slit = models.Slit(slitlet_id, shutter_id, dither_position,
+            #                   xcen, ycen, ymin, ymax, quadrant, source_id,
+            #                   all_shutters, source_name, source_alias,
+            #                   stellarity, source_xpos, source_ypos,
+            #                   source_ra, source_dec)
+            #slit = Slit('S1600A1', s+1, 0, 0, 0, slit_y_range[0], slit_y_range[1], q, 1)
+            
+            slitdata_model = models.Scale(xsize) & models.Scale(ysize) | \
+                models.Shift(xcenter) & models.Shift(ycenter)
+            msa_transform = slitdata_model | msa_model
+            x,y = msa_transform(0,0)
+            #slit2msa = Slit2Msa([slit], [msa_transform])
+            ##x,y = slit2msa('S1600A1',0,0)
+            #x,y = slit2msa.models[0](0,0)
+            sdata.append((num, xcenter, ycenter, xsize, ysize, q, x, y))
+            print(sdata[-1])
+
+    dt = [('num',int),('xcenter',float),('ycenter',float),('xsize',float),
+          ('ysize',float),('quadrant',int),('xmsa',float),('ymsa',float)]
+    data = np.zeros(len(sdata),dtype=np.dtype(dt))
+    data[...] = sdata
+    
+    return sdata
+
+def msa2slit(xmsa,ymsa):
+    """
+    Convert xmsa/ymsa to slit quadrant/row/column
+    """
+    # [4,2,3],  [quadrant, row/column, coefficients]
+    quadrant = (xmsa > 0)*2 + (ymsa > 0)*1 + 1
+    ccoef = MSA2SLIT_COEF[quadrant-1,0,:]
+    rcoef = MSA2SLIT_COEF[quadrant-1,1,:]
+    cc = ccoef[:,0] + xmsa*ccoef[:,1] + ymsa*ccoef[:,2]
+    rr = rcoef[:,0] + xmsa*rcoef[:,1] + ymsa*rcoef[:,2]
+    # convert to integer row/column and decimal xslit/yslit
+    column = np.round(cc).astype(int)
+    row = np.round(rr).astype(int)
+    xslit = cc-column + 0.5
+    yslit = rr-row + 0.5
+    # xslit/yslit values go from 0.0 to 1.0, 0.5 is the center of the shutter/slit
+    return quadrant,column,row,xslit,yslit
+    
 def maskgen(ra,dec):
     """
     Input coordinates and figure out where they will fall on the MSA shutter array
