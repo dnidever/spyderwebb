@@ -22,7 +22,8 @@ from jwst import datamodels
 from jwst.assign_wcs import pointing,nirspec,assign_wcs
 from stpipe import crds_client
 from astropy.modeling import models
-
+from datetime import datetime
+from astropy.time import Time
 from . import utils
 
 # Generate JWST NIRSpec MSA masks
@@ -38,38 +39,10 @@ MSA2SLIT_COEF = np.array([[[ 4.07470547e+02,  9.52495217e+03, -4.15835866e+00],
 
 class NIRSpecTransform(object):
 
-    def __init__(self,grating='G140H',filt='F100LP',ra=11.54924651643522,dec=42.0959801450496,
-                 msafile=None):
-        instrument = 'nirspec'
-        input_model = datamodels.ImageModel()
-        input_model.meta.instrument.name = 'NIRSPEC'
-        input_model.meta.instrument.grating = grating
-        input_model.meta.instrument.filter = filt
-        input_model.meta.instrument.detector = 'NRS2'
-        input_model.meta.instrument.gwa_pxav = 179.1740788000057
-        input_model.meta.instrument.gwa_pyav = 66.73139400000171
-        input_model.meta.instrument.gwa_tilt = 36.06178279999935
-        input_model.meta.instrument.gwa_xp_v = 179.1855152
-        input_model.meta.instrument.gwa_xtilt = 0.3576895300000106
-        input_model.meta.instrument.gwa_yp_v = 66.731394
-        input_model.meta.instrument.gwa_ytilt = 0.1332439180000042
-        input_model.meta.instrument.msa_state = 'PRIMARYPARK_CONFIG'
-        if msafile is None:
-            msafile = utils.datadir()+'jw02609009001_04_msa.fits'
-        input_model.meta.instrument.msa_metadata_file = msafile
-        input_model.meta.instrument.msa_metadata_id = 313
-        input_model.meta.observation.date = '2024-10-22'
-        input_model.meta.observation.time = '22:31:26.597'
-        input_model.meta.exposure.type = 'NRS_MSASPEC'
-        input_model.meta.dither.position_number = 1
-        input_model.meta.wcsinfo.ra_ref = ra
-        input_model.meta.wcsinfo.dec_ref = dec
-        input_model.meta.wcsinfo.v2_ref = 378.563202
-        input_model.meta.wcsinfo.v3_ref = -428.402832
-        input_model.meta.wcsinfo.v3yangle = 138.5745697
-        input_model.meta.wcsinfo.roll_ref = 89.30712467134603
-        input_model.meta.wcsinfo.velosys = 18316.66
-        input_model.meta.wcsinfo.vparity = -1
+    def __init__(self,grating='G140H',filt='F100LP',ra=11.549246,dec=42.095980,
+                 pa_aper=0.0,msafile=None):
+
+        input_model = create_initial_nirspec_model(ra,dec,grating,filt,pa_aper,msafile=msafile)
         self.input_model = input_model
         self._ra = ra
         self._dec = dec
@@ -284,8 +257,8 @@ class NIRSpecTransform(object):
         #slits.append(slit)
         return Gwa2Slit([slit], [bgwa2msa])
 
-    self slit_to_msa(self,quadrant,column,row):
-    def slit_to_msa(open_slits, msafile):
+    def slit_to_msa(self,quadrant,column,row):
+        #def slit_to_msa(open_slits, msafile):
         """
         The transform from ``slit_frame`` to ``msa_frame``.
         
@@ -416,8 +389,169 @@ def msa2slit(xmsa,ymsa):
     
     return quadrant,column,row,xslit,yslit
 
+def create_initial_nirspec_model(ra,dec,grating,filt,pa_aper=0.0,msafile=None):
+    """
+    Initialize a NIRSpec MSA data model
+    """
+    if grating not in ['G140H','G140M','G235H','G235M','G395H','G395M']:
+        raise Exception(grating+' not supported')
+    
+    instrument = 'nirspec'
+    input_model = datamodels.ImageModel()
+    input_model.meta.instrument.name = 'NIRSPEC'
+    input_model.meta.instrument.grating = grating
+    input_model.meta.instrument.filter = filt
+    input_model.meta.instrument.detector = 'NRS2'
 
+    # GWA_XTILT:  Grating wheel tilt along instrmnt model Y axis
+    #   Grating wheel tilt sensor value GWA_X_TILT_AVGED, corrected for sensor supply voltage
+    #   offsets and averaged over multiple samples. In the instrument/wheel-centric reference
+    #   frame this is the angle ALONG the X axis, while in the NIRSpec instrument model (used
+    #   to define the WCS of the data) this is the angle AROUND the X axis, and hence is
+    #   equivalent to the angle along the Y axis.
+    # GWA_YTILT:  Grating wheel tilt along instrmnt model X axis
+    #   Grating wheel tilt sensor value GWA_Y_TILT_AVGED, corrected
+    #   for sensor supply voltage offsets and averaged over multiple
+    #   samples. In the instrument/wheel-centric reference frame this
+    #   is the angle ALONG the Y axis, while in the NIRSpec instrument
+    #   model (used to define the WCS of the data) this is the angle AROUND
+    #   the Y axis, and hence is equivalent to the angle along the X axis.
+    # GWA_XP_V:  GWA X-position/tilt sensor calibrated
+    #   Grating wheel X-position tilt sensor calibrated value.
+    # GWA_YP_V:  GWA Y-position/tilt sensor calibrated
+    #   Grating wheel Y-position tilt sensor calibrated value.
+    # GWA_PXAV:  GWA REC avg X-pos/tilt sensor calibrated
+    #   Grating wheel REC-averaged and calibrated X-position tilt sensor value.
+    # GWA_PYAV:  GWA REC avg Y-pos/tilt sensor calibrated
+    #   Grating wheel REC-averaged and calibrated Y-position tilt sensor value.
+    # GWA_TILT:  GWA TILT (avg/calibrated) temperature
+    #   Grating wheel temperature sensor calibrated physical value.
+    
+    # GWA and other parameters depend on the grating
+    # There is still 
+    if grating=='G140H':
+        #input_model.meta.instrument.gwa_pxav = 179.1740788000057
+        #input_model.meta.instrument.gwa_pyav = 66.73139400000171
+        #input_model.meta.instrument.gwa_tilt = 36.06178279999935
+        #input_model.meta.instrument.gwa_xp_v = 179.1855152
+        #input_model.meta.instrument.gwa_xtilt = 0.3576895300000106
+        #input_model.meta.instrument.gwa_yp_v = 66.731394
+        #input_model.meta.instrument.gwa_ytilt = 0.1332439180000042
 
+        input_model.meta.instrument.gwa_pxav = 181.46136
+        input_model.meta.instrument.gwa_pyav = 66.97156
+        input_model.meta.instrument.gwa_tilt = 36.08218
+        input_model.meta.instrument.gwa_xp_v = 181.43849
+        input_model.meta.instrument.gwa_xtilt = 0.36216
+        input_model.meta.instrument.gwa_yp_v = 66.96012
+        input_model.meta.instrument.gwa_ytilt = 0.13367
+        coef = np.array([1.00019019, -138.9041342])
+        roll_ref = np.polyval(coef,pa_aper)
+        input_model.meta.wcsinfo.roll_ref = roll_ref
+    elif grating=='G140M':
+        input_model.meta.instrument.gwa_pxav = 165.03869
+        input_model.meta.instrument.gwa_pyav = 62.43131
+        input_model.meta.instrument.gwa_tilt = 36.09452
+        input_model.meta.instrument.gwa_xp_v = 165.05012
+        input_model.meta.instrument.gwa_xtilt = 0.32940
+        input_model.meta.instrument.gwa_yp_v = 62.43131
+        input_model.meta.instrument.gwa_ytilt = 0.12462
+        coef = np.array([1.00009524, -138.93522129])
+        roll_ref = np.polyval(coef,pa_aper)
+        input_model.meta.wcsinfo.roll_ref = roll_ref
+    elif grating=='G235H':
+        input_model.meta.instrument.gwa_pxav = 177.64160
+        input_model.meta.instrument.gwa_pyav = 69.05298
+        input_model.meta.instrument.gwa_tilt = 36.07978
+        input_model.meta.instrument.gwa_xp_v = 177.65304
+        input_model.meta.instrument.gwa_xtilt = 0.35456
+        input_model.meta.instrument.gwa_yp_v = 69.04155
+        input_model.meta.instrument.gwa_ytilt = 0.13785
+        coef = np.array([1.00031184, -138.85961624])
+        roll_ref = np.polyval(coef,pa_aper)
+        input_model.meta.wcsinfo.roll_ref = roll_ref
+    elif grating=='G235M':
+        input_model.meta.instrument.gwa_pxav = 158.48563
+        input_model.meta.instrument.gwa_pyav = 69.32746
+        input_model.meta.instrument.gwa_tilt = 36.09692
+        input_model.meta.instrument.gwa_xp_v = 158.46276
+        input_model.meta.instrument.gwa_xtilt = 0.31635
+        input_model.meta.instrument.gwa_yp_v = 69.32746
+        input_model.meta.instrument.gwa_ytilt = 0.13840
+        coef = np.array([1.00011506, -138.93469585])
+        roll_ref = np.polyval(coef,pa_aper)
+        input_model.meta.wcsinfo.roll_ref = roll_ref
+    elif grating=='G395H':
+        input_model.meta.instrument.gwa_pxav = 159.00027
+        input_model.meta.instrument.gwa_pyav = 72.49534
+        input_model.meta.instrument.gwa_tilt = 36.12278
+        input_model.meta.instrument.gwa_xp_v = 159.01171
+        input_model.meta.instrument.gwa_xtilt = 0.31735
+        input_model.meta.instrument.gwa_yp_v = 72.50678
+        input_model.meta.instrument.gwa_ytilt = 0.14471
+        coef = np.array([1.00014264, -138.86636817])
+        roll_ref = np.polyval(coef,pa_aper)
+        input_model.meta.wcsinfo.roll_ref = roll_ref
+    elif grating=='G395M':
+        input_model.meta.instrument.gwa_pxav = 141.21667
+        input_model.meta.instrument.gwa_pyav = 89.02094
+        input_model.meta.instrument.gwa_tilt = 36.10675
+        input_model.meta.instrument.gwa_xp_v = 141.23382
+        input_model.meta.instrument.gwa_xtilt = 0.28186
+        input_model.meta.instrument.gwa_yp_v = 89.03237
+        input_model.meta.instrument.gwa_ytilt = 0.17767
+        coef = np.array([1.00018741, -138.96722442])
+        roll_ref = np.polyval(coef,pa_aper)
+        input_model.meta.wcsinfo.roll_ref = roll_ref
+    else:
+        raise Exception(grating+' not supported')
+            
+    input_model.meta.instrument.msa_state = 'PRIMARYPARK_CONFIG'
+    if msafile is None:
+        msafile = utils.datadir()+'jw02609009001_04_msa.fits'
+    input_model.meta.instrument.msa_metadata_file = msafile
+    input_model.meta.instrument.msa_metadata_id = 1
+    #msahdu = fits.open(msafile)
+    #hdu[2].data['msa_metadata_id'][0]
+    # Use today's date
+    obsdate = Time.now().isot
+    input_model.meta.observation.date = obsdate.split('T')[0]
+    input_model.meta.observation.time = obsdate.split('T')[1]
+    input_model.meta.exposure.type = 'NRS_MSASPEC'
+    input_model.meta.dither.position_number = 1
+    input_model.meta.wcsinfo.ra_ref = ra
+    input_model.meta.wcsinfo.dec_ref = dec
+
+    # velocity_corr = utils.velocity_correction(input_model.meta.wcsinfo.velosys)
+
+    # Science Instrument Aperture Files (SIAF)
+    
+    # V2_REF:  [arcsec] Telescope V2 coord of reference point
+    #   The telescope V2 coordinate, in units of arc seconds, at the aperture reference
+    #   point. Taken from the SIAF 'V2Ref' entry
+    # V3_REF:  [arcsec] Telescope V3 coord of reference point
+    #   The telescope V3 coordinate, in units of arc seconds, at the aperture reference
+    #   point. Taken from the SIAF 'V3Ref' entry
+    # V3I_YANGLE (V3YANGLE):  Direction angle in V3 (Y)
+    #   Angle from V3 axis to Ideal y axis (deg)
+    #input_model.meta.wcsinfo.v2_ref = 378.563202
+    #input_model.meta.wcsinfo.v3_ref = -428.402832
+    #input_model.meta.wcsinfo.v3yangle = 138.5745697
+
+    input_model.meta.wcsinfo.v2_ref = 299.26538
+    input_model.meta.wcsinfo.v3_ref = -456.72629
+    input_model.meta.wcsinfo.v3yangle = 138.57578
+    
+    # velosys [m/s] Barycentric correction to radial velocity
+    #input_model.meta.wcsinfo.velosys = 18316.66
+    input_model.meta.wcsinfo.vparity = -1
+
+    #input_model.meta.instrument.msa_metadata_id = 313
+    #input_model.meta.observation.date = '2024-10-22'
+    #input_model.meta.observation.time = '22:31:26.597'
+
+    
+    return input_model
 
 def maskgen(ra,dec):
     """
