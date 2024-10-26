@@ -215,41 +215,26 @@ class NIRSpecTransform(object):
                 velocity_corr = nirspec.velocity_correction(self.input_model.meta.wcsinfo.velosys)
                 lgreq = lgreq | velocity_corr
                 log.info("Applied Barycentric velocity correction : {}".format(velocity_corr[1].amplitude.value))
-
-        # The wavelength units up to this point are
-        # meters as required by the pipeline but the desired output wavelength units is microns.
-        # So we are going to Scale the spectral units by 1e6 (meters -> microns)
-        #is_lamp_exposure = self.input_model.meta.exposure.type in ['NRS_LAMP', 'NRS_AUTOWAVE', 'NRS_AUTOFLAT']
-        #if self.input_model.meta.instrument.filter == 'OPAQUE' or is_lamp_exposure:
-        #    lgreq = lgreq | Scale(1e6)
         
         msa_quadrant = self.msa['Q'+str(quadrant)]
         msa_model = msa_quadrant['model']
         msa_data = msa_quadrant['data']
-        # Slit('S1600A1', 3, 0, 0, 0, slit_y_range[0], slit_y_range[1], 5, 1)
         #slit = models.Slit(slitlet_id, shutter_id, dither_position,
         #                   xcen, ycen, ymin, ymax, quadrant, source_id,
         #                   all_shutters, source_name, source_alias,
         #                   stellarity, source_xpos, source_ypos,
         #                   source_ra, source_dec)
-        #slit = Slit('S1600A1', s+1, 0, 0, 0, slit_y_range[0], slit_y_range[1], q, 1)
-        # slit_id is a running number from 1 to 62415
+        # slit_id is a running number from 1 to 62415, start at 1 for each quadrant
         slit_id = (row-1)*365 + column   # CHECK THIS!!
-        slit = Slit('S1600A1', slit_id, 0, 0, 0, self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
+        slit = Slit('Q'+str(quadrant)+'N'+str(slit_id), slit_id, 1, column, row,
+                    self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
         
         mask = nirspec.mask_slit(slit.ymin, slit.ymax)
-        #slit_id = slit.shutter_id
-        # Shutter IDs are numbered starting from 1
-        # while FS are numbered starting from 0.
-        # "Quadrant 5 is for fixed slits.
-        #if quadrant != 5:
-        #    slit_id -= 1
-        slitdata = msa_data[slit_id-1]
+        slitdata = msa_data[slit_id-1]   # shutter IDs start at 1
         slitdata_model = nirspec.get_slit_location_model(slitdata)
         msa_transform = (slitdata_model | msa_model)
         msa2gwa = (msa_transform | collimator2gwa)
         gwa2msa = nirspec.gwa_to_ymsa(msa2gwa, slit=None, slit_y_range=self.slit_y_range)  # TODO: Use model sets here
-        #gwa2msa = nirspec.gwa_to_ymsa(msa2gwa, slit=slit, slit_y_range=(slit.ymin, slit.ymax))  # TODO: Use model sets here
         #  3 inputs -> 3 outputs
         # inputs: three gwa angles 
         # outputs: xslit, yslit, lam
@@ -276,15 +261,10 @@ class NIRSpecTransform(object):
         # msa to before_gwa
         msa2bgwa = msa2gwa & Identity(1) | Mapping((3, 0, 1, 2)) | agreq
         bgwa2msa.inverse = msa2bgwa
-        #slit_models.append(bgwa2msa)
-        #slits.append(slit)
-
-        import pdb; pdb.set_trace()
+    
+        return bgwa2msa
         
-        return Gwa2Slit([slit], [bgwa2msa])
-
     def slit_to_msa(self,quadrant,column,row):
-        #def slit_to_msa(open_slits, msafile):
         """
         The transform from ``slit_frame`` to ``msa_frame``.
         
@@ -303,26 +283,26 @@ class NIRSpecTransform(object):
         msa_quadrant = self.msa['Q'+str(quadrant)]
         msa_data = msa_quadrant['data']
         msa_model = msa_quadrant['model']
+        # slit_id is a running number from 1 to 62415, start at 1 for each quadrant
         slit_id = (row-1)*365 + column   # CHECK THIS!!
-        slit = Slit('S1600A1', slit_id, 0, 0, 0, self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
-        # Shutters are numbered starting from 1.
-        # Fixed slits (Quadrant 5) are mapped starting from 0.
-        #if quadrant != 5:
-        #    slit_id = slit_id - 1
-        slitdata = msa_data[slit_id-1]
+        slit = Slit('Q'+str(quadrant)+'N'+str(slit_id), slit_id, 1, column, row,
+                    self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
+        slitdata = msa_data[slit_id-1]    # shutter IDs start at 1
         slitdata_model = nirspec.get_slit_location_model(slitdata)
         msa_transform = slitdata_model | msa_model
-        #models.append(msa_transform)
-        #slits.append(slit)
-        return Slit2Msa([slit], [msa_transform])
+        return msa_transform
     
     def world2detector(self,ra,dec):
         quadrant,column,row,xslit,yslit = self.world2slit(ra,dec)
         # the msa_pipeline/wcs is configured for particular slits
         # need to generate new wcs for each slit
         n = np.atleast_1d(quadrant).size
+        out = []
         for i in range(n):
-            msa_pipeline = self.msa_pipeline.copy()
+            # Make sure it is in bounds
+            if row[i]<1 or row[i]>171 or column[i]<1 or column[i]>365:
+                out.append(None)
+                continue
             # msa_pipeline = [(det, dms2detector),
             #                 (sca, det2gwa),
             #                 (gwa, gwa2slit),
@@ -333,8 +313,6 @@ class NIRSpecTransform(object):
             #                 (v2v3vacorr, tel2sky),
             #                 (world, None)]
             # gwa2slit and slit2msa need to be modified
-            gwa2slit = msa_pipeline[2][1]
-            slit2msa = msa_pipeline[3][1]            
 
             # GWA to SLIT
             gwa2slit = self.gwa_to_slit(quadrant[i],column[i],row[i])
@@ -342,14 +320,9 @@ class NIRSpecTransform(object):
             gwa2slit.name = "gwa2slit"
 
             # SLIT to MSA transform
-            slit2msa = self.slit_to_msa(quadrant[i],column[i],row[i])
-            #slit2msa = nirspec.slit_to_msa(open_slits_id, self.reference_files['msa'])
-            slit2msa.name = "slit2msa"
-
-            # Construct new pipeline for this slit
-            msa_pipeline[2] = (msa_pipeline[2][0], gwa2slit)
-            msa_pipeline[3] = (msa_pipeline[3][0], slit2msa)
-            msa_wcs = WCS(msa_pipeline)
+            #slit2msa = self.slit_to_msa(quadrant[i],column[i],row[i])
+            ##slit2msa = nirspec.slit_to_msa(open_slits_id, self.reference_files['msa'])
+            #slit2msa.name = "slit2msa"
 
 
             # msa_pipeline = [(det, dms2detector),
@@ -359,12 +332,19 @@ class NIRSpecTransform(object):
             #                 (msa_frame, msa2oteip),
 
             det, sca, gwa, slit_frame, msa_frame, oteip, v2v3, v2v3vacorr, world = nirspec.create_frames()
-            
-            newpipe = [(det, self.msa_pipeline[0][1].copy()),
-                       (sca, self.msa_pipeline[1][1].copy()),
-                       (gwa, gwa2slit),
-                       (slit_frame,None)]
 
+            # DETECTOR to GWA transform, 2 inputs, 3 outputs
+            det2gwa = nirspec.detector_to_gwa(self.reference_file_names,
+                                              self.input_model.meta.instrument.detector, self.disperser)
+
+            # Construct new pipeline for this slit
+            slit_pipeline = [(det, self.msa_pipeline[0][1].copy()),
+                             (sca, det2gwa),
+                             (gwa, gwa2slit),
+                             (slit_frame,None)]
+            slit_wcs = WCS(slit_pipeline)
+            # ['detector', 'sca', 'gwa', 'slit_frame']
+            
             # dms2detector: 2 inputs, 2 outputs
             #   inputs  ('x0', 'x1')
             #   outputs ('y0', 'y1')
@@ -380,18 +360,21 @@ class NIRSpecTransform(object):
             #   outputs  ('x_msa', 'y_msa')
             
             # Get trace on the detector
-            world2det = msa_wcs.get_transform('slit_frame', 'detector')
-
-            lam = np.linspace(self.waverange[0],self,waverange[1],5000)
-            x0,y0 = slit2detector(0+np.zeros(5000),0+np.zeros(5000),lam)   # centered in slit
-            dt = [('wave',float),('x',float),('y',float)]
-            trace = np.zeros(len(x0),dtype=np.dtype(dt))
-            trace['wave'] = lam
-            trace['x'] = x0
-            trace['y'] = y0
+            slit2det = slit_wcs.get_transform('slit_frame', 'detector')
             
-            import pdb; pdb.set_trace()
-            
+            lam = np.linspace(self.waverange[0],self.waverange[1],5000)
+            x0,y0 = slit2det(xslit[i]+np.zeros(5000),yslit[i]+np.zeros(5000),lam)
+            # limit it to the detector bounds
+            gd, = np.where((x0 >= 0) & (x0 <= 2047))
+            if len(gd)>0:
+                dt = [('wave',float),('x',float),('y',float)]
+                trace = np.zeros(len(gd),dtype=np.dtype(dt))
+                trace['wave'] = lam[gd]
+                trace['x'] = x0[gd]
+                trace['y'] = y0[gd]
+            else:
+                trace = None
+                
             out.append(trace)
             
         return out
