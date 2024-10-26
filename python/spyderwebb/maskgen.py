@@ -22,6 +22,7 @@ from jwst import datamodels
 from jwst.assign_wcs import pointing,nirspec,assign_wcs
 from stpipe import crds_client
 from astropy.modeling import models
+from astropy.modeling.models import Mapping, Identity, Const1D, Scale, Tabular1D
 from datetime import datetime
 from astropy.time import Time
 from . import utils
@@ -111,7 +112,14 @@ class NIRSpecTransform(object):
 
         # Get MSA model information
         self.msa = asdf.open(self.reference_file_names['msa'])
-        
+
+        # Get dispersion
+        self.disperser = nirspec.get_disperser(self.input_model, self.reference_file_names['disperser'])
+
+        # Wavelength range
+        self.waverange = [self.input_model.meta.wcsinfo.waverange_start,
+                          self.input_model.meta.wcsinfo.waverange_end]
+
             
     def world2msa(self,ra,dec):
         """ Convert ra/dec to coordiantes in the MSA frame."""
@@ -211,13 +219,13 @@ class NIRSpecTransform(object):
         # The wavelength units up to this point are
         # meters as required by the pipeline but the desired output wavelength units is microns.
         # So we are going to Scale the spectral units by 1e6 (meters -> microns)
-        is_lamp_exposure = self.input_model.meta.exposure.type in ['NRS_LAMP', 'NRS_AUTOWAVE', 'NRS_AUTOFLAT']
-        if self.input_model.meta.instrument.filter == 'OPAQUE' or is_lamp_exposure:
-            lgreq = lgreq | Scale(1e6)
-
+        #is_lamp_exposure = self.input_model.meta.exposure.type in ['NRS_LAMP', 'NRS_AUTOWAVE', 'NRS_AUTOFLAT']
+        #if self.input_model.meta.instrument.filter == 'OPAQUE' or is_lamp_exposure:
+        #    lgreq = lgreq | Scale(1e6)
+        
         msa_quadrant = self.msa['Q'+str(quadrant)]
-        msa_model = msa_quadrant.model
-        msa_data = msa_quadrant.data
+        msa_model = msa_quadrant['model']
+        msa_data = msa_quadrant['data']
         # Slit('S1600A1', 3, 0, 0, 0, slit_y_range[0], slit_y_range[1], 5, 1)
         #slit = models.Slit(slitlet_id, shutter_id, dither_position,
         #                   xcen, ycen, ymin, ymax, quadrant, source_id,
@@ -225,12 +233,11 @@ class NIRSpecTransform(object):
         #                   stellarity, source_xpos, source_ypos,
         #                   source_ra, source_dec)
         #slit = Slit('S1600A1', s+1, 0, 0, 0, slit_y_range[0], slit_y_range[1], q, 1)
-        slit = Slit('S1600A1', s+1, 0, 0, 0, self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
         # slit_id is a running number from 1 to 62415
         slit_id = (row-1)*365 + column   # CHECK THIS!!
-        slit.shutter_id = slit_id
+        slit = Slit('S1600A1', slit_id, 0, 0, 0, self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
         
-        #mask = mask_slit(slit.ymin, slit.ymax)
+        mask = nirspec.mask_slit(slit.ymin, slit.ymax)
         #slit_id = slit.shutter_id
         # Shutter IDs are numbered starting from 1
         # while FS are numbered starting from 0.
@@ -243,11 +250,27 @@ class NIRSpecTransform(object):
         msa2gwa = (msa_transform | collimator2gwa)
         gwa2msa = nirspec.gwa_to_ymsa(msa2gwa, slit=None, slit_y_range=self.slit_y_range)  # TODO: Use model sets here
         #gwa2msa = nirspec.gwa_to_ymsa(msa2gwa, slit=slit, slit_y_range=(slit.ymin, slit.ymax))  # TODO: Use model sets here
+        #  3 inputs -> 3 outputs
+        # inputs: three gwa angles 
+        # outputs: xslit, yslit, lam
+        # This is from the code in gwa_to_ifuslit()
+        #  input coordinates:
+        #  (alpha_out, beta_out, gamma_out), angles at the GWA, coming from the camera
+        #  (0, - beta_out, alpha_out, beta_out)
+        #  (0, sy, alpha_out, beta_out)
+        #  (0, sy, 0, sy, alpha_out, beta_out)
+        #  (0, sy, alpha_in, beta_in, gamma_in, alpha_out, beta_out)
+        #  (0, sy, alpha_in, beta_in,alpha_out)
+        #  (0, sy, lambda_computed)
+        # bgwa = "before" gwa
         bgwa2msa = Mapping((0, 1, 0, 1), n_inputs=3) | \
-            Const1D(0) * Identity(1) & Const1D(-1) * Identity(1) & Identity(2) | \
-            Identity(1) & gwa2msa & Identity(2) | \
-            Mapping((0, 1, 0, 1, 2, 3)) | Identity(2) & msa2gwa & Identity(2) | \
-            Mapping((0, 1, 2, 3, 5), n_inputs=7) | Identity(2) & lgreq | mask
+                   Const1D(0) * Identity(1) & Const1D(-1) * Identity(1) & Identity(2) | \
+                   Identity(1) & gwa2msa & Identity(2) | \
+                   Mapping((0, 1, 0, 1, 2, 3)) | \
+                   Identity(2) & msa2gwa & Identity(2) | \
+                   Mapping((0, 1, 2, 3, 5), n_inputs=7) | \
+                   Identity(2) & lgreq | \
+                   mask
         #   Mapping((0, 1, 2, 5), n_inputs=7) | Identity(2) & lgreq | mask
         # and modify lgreq to accept alpha_in, beta_in, alpha_out
         # msa to before_gwa
@@ -255,6 +278,9 @@ class NIRSpecTransform(object):
         bgwa2msa.inverse = msa2bgwa
         #slit_models.append(bgwa2msa)
         #slits.append(slit)
+
+        import pdb; pdb.set_trace()
+        
         return Gwa2Slit([slit], [bgwa2msa])
 
     def slit_to_msa(self,quadrant,column,row):
@@ -275,12 +301,10 @@ class NIRSpecTransform(object):
            Transform from ``slit_frame`` to ``msa_frame``.
         """
         msa_quadrant = self.msa['Q'+str(quadrant)]
-        msa_data = msa_quadrant.data
-        msa_model = msa_quadrant.model
-        slit = Slit('S1600A1', s+1, 0, 0, 0, self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
-        # slit_id is a running number from 1 to 62415
+        msa_data = msa_quadrant['data']
+        msa_model = msa_quadrant['model']
         slit_id = (row-1)*365 + column   # CHECK THIS!!
-        slit.shutter_id = slit_id
+        slit = Slit('S1600A1', slit_id, 0, 0, 0, self.slit_y_range[0], self.slit_y_range[1], quadrant, 1)
         # Shutters are numbered starting from 1.
         # Fixed slits (Quadrant 5) are mapped starting from 0.
         #if quadrant != 5:
@@ -313,15 +337,64 @@ class NIRSpecTransform(object):
             slit2msa = msa_pipeline[3][1]            
 
             # GWA to SLIT
-            gwa2slit = self.gwa_to_slit(quadrant,column,row)
-            #gwa2slit = nirspec.gwa_to_slit(open_slits_id, self.input_model, disperser, self.reference_files_names)
+            gwa2slit = self.gwa_to_slit(quadrant[i],column[i],row[i])
+            #gwa2slit = nirspec.gwa_to_slit(open_slits_id, self.input_model, self.disperser, self.reference_file_names)
             gwa2slit.name = "gwa2slit"
 
             # SLIT to MSA transform
-            slit2msa = self.slit_to_msa(quadrant,column,row)
+            slit2msa = self.slit_to_msa(quadrant[i],column[i],row[i])
             #slit2msa = nirspec.slit_to_msa(open_slits_id, self.reference_files['msa'])
             slit2msa.name = "slit2msa"
+
+            # Construct new pipeline for this slit
+            msa_pipeline[2] = (msa_pipeline[2][0], gwa2slit)
+            msa_pipeline[3] = (msa_pipeline[3][0], slit2msa)
+            msa_wcs = WCS(msa_pipeline)
+
+
+            # msa_pipeline = [(det, dms2detector),
+            #                 (sca, det2gwa),
+            #                 (gwa, gwa2slit),
+            #                 (slit_frame, slit2msa),
+            #                 (msa_frame, msa2oteip),
+
+            det, sca, gwa, slit_frame, msa_frame, oteip, v2v3, v2v3vacorr, world = nirspec.create_frames()
             
+            newpipe = [(det, self.msa_pipeline[0][1].copy()),
+                       (sca, self.msa_pipeline[1][1].copy()),
+                       (gwa, gwa2slit),
+                       (slit_frame,None)]
+
+            # dms2detector: 2 inputs, 2 outputs
+            #   inputs  ('x0', 'x1')
+            #   outputs ('y0', 'y1')
+            # det2gwa: 4 inputs, 5 outputs
+            #   inputs  ('x0', 'x1', 'x', 'y')
+            #   outputs ('x0', 'x1', 'x', 'y', 'z')
+            # gwa2slit: 4 inputs, 4 outputs
+            #   inputs  ('name', 'angle1', 'angle2', 'angle3')
+            #   outputs ('name', 'x_slit', 'y_slit', 'lam')
+
+            # slit2msa: 3 inputs, 2 outputs
+            #   inputs   ('name', 'x_slit', 'y_slit')
+            #   outputs  ('x_msa', 'y_msa')
+            
+            # Get trace on the detector
+            world2det = msa_wcs.get_transform('slit_frame', 'detector')
+
+            lam = np.linspace(self.waverange[0],self,waverange[1],5000)
+            x0,y0 = slit2detector(0+np.zeros(5000),0+np.zeros(5000),lam)   # centered in slit
+            dt = [('wave',float),('x',float),('y',float)]
+            trace = np.zeros(len(x0),dtype=np.dtype(dt))
+            trace['wave'] = lam
+            trace['x'] = x0
+            trace['y'] = y0
+            
+            import pdb; pdb.set_trace()
+            
+            out.append(trace)
+            
+        return out
             
     def traces(self,ra,dec):
         """ Determine the traces on the detector."""
@@ -430,21 +503,21 @@ def create_initial_nirspec_model(ra,dec,grating,filt,pa_aper=0.0,msafile=None):
     # GWA and other parameters depend on the grating
     # There is still 
     if grating=='G140H':
-        #input_model.meta.instrument.gwa_pxav = 179.1740788000057
-        #input_model.meta.instrument.gwa_pyav = 66.73139400000171
-        #input_model.meta.instrument.gwa_tilt = 36.06178279999935
-        #input_model.meta.instrument.gwa_xp_v = 179.1855152
-        #input_model.meta.instrument.gwa_xtilt = 0.3576895300000106
-        #input_model.meta.instrument.gwa_yp_v = 66.731394
-        #input_model.meta.instrument.gwa_ytilt = 0.1332439180000042
+        input_model.meta.instrument.gwa_pxav = 179.1740788000057
+        input_model.meta.instrument.gwa_pyav = 66.73139400000171
+        input_model.meta.instrument.gwa_tilt = 36.06178279999935
+        input_model.meta.instrument.gwa_xp_v = 179.1855152
+        input_model.meta.instrument.gwa_xtilt = 0.3576895300000106
+        input_model.meta.instrument.gwa_yp_v = 66.731394
+        input_model.meta.instrument.gwa_ytilt = 0.1332439180000042
 
-        input_model.meta.instrument.gwa_pxav = 181.46136
-        input_model.meta.instrument.gwa_pyav = 66.97156
-        input_model.meta.instrument.gwa_tilt = 36.08218
-        input_model.meta.instrument.gwa_xp_v = 181.43849
-        input_model.meta.instrument.gwa_xtilt = 0.36216
-        input_model.meta.instrument.gwa_yp_v = 66.96012
-        input_model.meta.instrument.gwa_ytilt = 0.13367
+        #input_model.meta.instrument.gwa_pxav = 181.46136
+        #input_model.meta.instrument.gwa_pyav = 66.97156
+        #input_model.meta.instrument.gwa_tilt = 36.08218
+        #input_model.meta.instrument.gwa_xp_v = 181.43849
+        #input_model.meta.instrument.gwa_xtilt = 0.36216
+        #input_model.meta.instrument.gwa_yp_v = 66.96012
+        #input_model.meta.instrument.gwa_ytilt = 0.13367
         coef = np.array([1.00019019, -138.9041342])
         roll_ref = np.polyval(coef,pa_aper)
         input_model.meta.wcsinfo.roll_ref = roll_ref
@@ -534,13 +607,13 @@ def create_initial_nirspec_model(ra,dec,grating,filt,pa_aper=0.0,msafile=None):
     #   point. Taken from the SIAF 'V3Ref' entry
     # V3I_YANGLE (V3YANGLE):  Direction angle in V3 (Y)
     #   Angle from V3 axis to Ideal y axis (deg)
-    #input_model.meta.wcsinfo.v2_ref = 378.563202
-    #input_model.meta.wcsinfo.v3_ref = -428.402832
-    #input_model.meta.wcsinfo.v3yangle = 138.5745697
+    input_model.meta.wcsinfo.v2_ref = 378.563202
+    input_model.meta.wcsinfo.v3_ref = -428.402832
+    input_model.meta.wcsinfo.v3yangle = 138.5745697
 
-    input_model.meta.wcsinfo.v2_ref = 299.26538
-    input_model.meta.wcsinfo.v3_ref = -456.72629
-    input_model.meta.wcsinfo.v3yangle = 138.57578
+    #input_model.meta.wcsinfo.v2_ref = 299.26538
+    #input_model.meta.wcsinfo.v3_ref = -456.72629
+    #input_model.meta.wcsinfo.v3yangle = 138.57578
     
     # velosys [m/s] Barycentric correction to radial velocity
     #input_model.meta.wcsinfo.velosys = 18316.66
