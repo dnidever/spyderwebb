@@ -36,7 +36,8 @@ class JWSTANNModel():
         self.ranges = np.zeros((self.nlabels,2),float)
         for i in range(self.nlabels):
             self.ranges[i,:] = [np.max(self._ranges[:,i,0]),np.min(self._ranges[:,i,1])]
-        
+        self.ranges[0,:] = [np.min(self._ranges[:,0,:]),np.max(self._ranges[:,0,:])]
+
         # Alpha element index
         alphaindex = []
         for i,l in enumerate(self.labels):
@@ -70,7 +71,7 @@ class JWSTANNModel():
         """ Make the labels array from a dictionary."""
         # Dictionary input
         if type(pars) is dict:
-            labels = np.zeros(28)
+            labels = np.zeros(self.nlabels)
             # Must at least have Teff and logg
             for k in pars.keys():
                 if k=='alpham':   # mean alpha
@@ -243,7 +244,10 @@ class JWSTANNModel():
             error += '{:s}={:.4f}'.format(self.labels[badindex],labels[badindex])
             error += ' '+srr
             if spobs is None:
-                return np.zeros(self._spobs.size)+1e30
+                if self._spobs is None:
+                    return np.zeros(len(self._dispersion))+1e30
+                else:
+                    return np.zeros(self._spobs.size)+1e30
             else:
                 return np.zeros(spobs.size)+1e30
             #raise ValueError(error)
