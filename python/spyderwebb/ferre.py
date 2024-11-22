@@ -266,7 +266,7 @@ class FERRE(object):
             self.ranges[i,1] = np.max(self.info[self.labels[i]])
         self.steps = self.info['STEPS']
         self.npoints = self.info['N_P']
-        self.nspectra = np.sum(self.npoints)
+        self.nspectra = np.prod(self.npoints)
         self.vacuum = self.info['VACUUM']
         self.resolution = self.info['RESOLUTION']
         if outwave is not None:
