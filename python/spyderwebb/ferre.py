@@ -378,8 +378,9 @@ class FERRE(object):
             newpars = pars
 
         self.ncall += 1
-        out = interp(newpars,wave=wave)
-
+        out = interp(newpars,wave=wave,grid=os.path.basename(self.gridfile),
+                     griddir=os.path.dirname(self.gridfile))
+        
         # Now do the continuum normalization
         if cnorder is not None and norm==True:
             wave = out['wave']
