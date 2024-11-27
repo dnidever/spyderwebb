@@ -92,7 +92,7 @@ def gridinfo(filename):
     return out
 
 
-def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
+def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5b.dat',
            griddir=None,ferresrc=None):
     """
     Interpolate in the FERRE grid.
@@ -139,8 +139,10 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
     # Number of objects
     if np.array(pars).ndim==2:
         nobj = pars.shape[0]
+        npars = pars.shape[1]
     else:
         nobj = 1
+        npars = len(pars)
     
     # Read the header information
     f = open(gridfile,'r')
@@ -163,9 +165,9 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
     os.symlink(gridfile.replace('.dat','.hdr'),tmpdir+'/'+gridbase.replace('.dat','.hdr'))
     lines = []
     lines += ["&LISTA"]
-    lines += ["NDIM = 4"]
+    lines += ["NDIM = "+str(npars)]
     lines += ["NOV = 0"]
-    lines += ["INDV = 1 2 3 4"]
+    lines += ["INDV = "+" ".join((np.arange(npars)+1).astype(str))]
     lines += ["SYNTHFILE(1) = '"+gridbase+"'"]
     lines += ["F_FORMAT = 1"]
     lines += ["PFILE = 'ferre.ipf'"]
@@ -191,10 +193,12 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
     if np.array(pars).ndim==2:
         flines = []
         for i in range(nobj):
-            flines += ['test{:d} {:.3f} {:.3f} {:.3f} {:.3f}'.format(i+1,*pars[i,:])]
+            fmt = 'test{:d}'+npars*' {:.3f}'
+            flines += [fmt.format(i+1,*pars[i,:])]
     else:
         nstars = 1
-        flines = 'test1 {:.3f} {:.3f} {:.3f} {:.3f}'.format(*pars)
+        fmt = 'test1'+len(pars)*' {:.3f}'
+        flines = fmt.format(*pars)
     dln.writelines('ferre.ipf',flines)
     
     # Run FERRE
@@ -237,7 +241,7 @@ def interp(pars,wave=None,cont=None,ncont=None,grid='jwstgiant5.dat',
 
 class FERRE(object):
 
-    def __init__(self,grid='jwstgiant5.dat',outwave=None,cnorder=6,cperclevel=90.0,cbinsize=0.1,
+    def __init__(self,grid='jwstgiant5b.dat',outwave=None,cnorder=6,cperclevel=90.0,cbinsize=0.1,
                  loggrelation=False,verbose=False):
         """
         outwave: output wavelength array.  By default, the full grid wavelength array will be used.
@@ -512,7 +516,7 @@ class FERRE(object):
 
     
 def fit(slist,inter=3,algor=1,init=1,indini=None,nruns=1,
-        cont=1,ncont=0,errbar=1,grid='jwstgiant5.dat',save=False):
+        cont=1,ncont=0,errbar=1,grid='jwstgiant5b.dat',save=False):
     """ 
     Run FERRE on list of spectra
 
@@ -824,7 +828,7 @@ def specprep(spec,vrel=None):
     return out
 
 
-def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant5.dat',
+def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant5b.dat',
          initgrid=True,outlier=True,verbose=False):
     """ 
     Fit spectrum with curve_fit running FERRE to get the models
@@ -906,7 +910,7 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant5.dat',
             print('Vrel: {:.2f} km/s'.format(vrel1))
             print('S/N: {:.2f}'.format(spec.snr))
         # Initialize the FERRE object
-        fr = FERRE(loggrelation=loggrelation,verbose=(verbose>1))                
+        fr = FERRE(loggrelation=loggrelation,grid=grid,verbose=(verbose>1))
         # Prepare spectrum for FERRE
         pspec = specprep(spec)
         # Now normalize
@@ -918,38 +922,60 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant5.dat',
         pspec['err'] = pspec['oerr']/cont      
         # Normalize
         fr.outwave = pspec['wave']
+        estimates = np.mean(fr.ranges,axis=1)
         if loggrelation:
-            estimates = [4500.0,-1.0,0.0]
+            #estimates = [4500.0,-1.0,0.0]
+            estimates = np.delete(estimates,1)
             bounds = [np.delete(fr.ranges[:,0],1),np.delete(fr.ranges[:,1],1)]            
         else:
-            estimates = [4500.0,2.5,-1.0,0.0]
+            #estimates = [4500.0,2.5,-1.0,0.0]
             bounds = [fr.ranges[:,0],fr.ranges[:,1]]
 
-
+            
         # Run grid of ~100 points to get first estimate
         if initgrid:
+            # if loggrelation:
+            #     nsample = 5
+            #     tstep = np.ptp(fr.ranges[0,:])/nsample
+            #     tgrid = np.arange(nsample)*tstep+fr.ranges[0,0]+tstep*0.5
+            #     mstep = np.ptp(fr.ranges[2,:])/nsample
+            #     mgrid = np.arange(nsample)*mstep+fr.ranges[2,0]+mstep*0.5
+            #     astep = np.ptp(fr.ranges[3,:])/nsample
+            #     agrid = np.arange(nsample)*astep+fr.ranges[3,0]+astep*0.5
+            #     tgrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,mgrid,agrid)
+            #     gridpars = np.vstack((tgrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            # else:
+            #     nsample = 4
+            #     tstep = np.ptp(fr.ranges[0,:])/nsample
+            #     tgrid = np.arange(nsample)*tstep+fr.ranges[0,0]+tstep*0.5
+            #     gstep = np.ptp(fr.ranges[1,:])/nsample
+            #     ggrid = np.arange(nsample)*gstep+fr.ranges[1,0]+gstep*0.5        
+            #     mstep = np.ptp(fr.ranges[2,:])/nsample
+            #     mgrid = np.arange(nsample)*mstep+fr.ranges[2,0]+mstep*0.5
+            #     astep = np.ptp(fr.ranges[3,:])/nsample
+            #     agrid = np.arange(nsample)*astep+fr.ranges[3,0]+astep*0.5  
+            #     tgrid2d,ggrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,ggrid,mgrid,agrid)
+            #     gridpars = np.vstack((tgrid2d.flatten(),ggrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            ndim = fr.nlabels
+            nlabelfit = fr.nlabels
             if loggrelation:
+                nlabelfit -= 1
+            if 5**nlabelfit < 500:
                 nsample = 5
-                tstep = np.ptp(fr.ranges[0,:])/nsample
-                tgrid = np.arange(nsample)*tstep+fr.ranges[0,0]+tstep*0.5
-                mstep = np.ptp(fr.ranges[2,:])/nsample
-                mgrid = np.arange(nsample)*mstep+fr.ranges[2,0]+mstep*0.5
-                astep = np.ptp(fr.ranges[3,:])/nsample
-                agrid = np.arange(nsample)*astep+fr.ranges[3,0]+astep*0.5
-                tgrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,mgrid,agrid)
-                gridpars = np.vstack((tgrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
-            else:
+            elif 4**nlabelfit < 500:
                 nsample = 4
-                tstep = np.ptp(fr.ranges[0,:])/nsample
-                tgrid = np.arange(nsample)*tstep+fr.ranges[0,0]+tstep*0.5
-                gstep = np.ptp(fr.ranges[1,:])/nsample
-                ggrid = np.arange(nsample)*gstep+fr.ranges[1,0]+gstep*0.5            
-                mstep = np.ptp(fr.ranges[2,:])/nsample
-                mgrid = np.arange(nsample)*mstep+fr.ranges[2,0]+mstep*0.5
-                astep = np.ptp(fr.ranges[3,:])/nsample
-                agrid = np.arange(nsample)*astep+fr.ranges[3,0]+astep*0.5  
-                tgrid2d,ggrid2d,mgrid2d,agrid2d = np.meshgrid(tgrid,ggrid,mgrid,agrid)
-                gridpars = np.vstack((tgrid2d.flatten(),ggrid2d.flatten(),mgrid2d.flatten(),agrid2d.flatten())).T
+            else:
+                nsample = 3
+            gridlist = []
+            for i in range(ndim):
+                step1 = np.ptp(fr.ranges[i,:])/nsample
+                grid1 = np.arange(nsample)*step1+fr.ranges[i,0]+step1*0.5
+                gridlist.append(grid1)
+            grid2dlist = np.meshgrid(*gridlist)
+            gridpars = np.vstack([g.flatten() for g in grid2dlist]).T
+            if loggrelation:
+                gridpars = np.delete(gridpars,1,axis=1)
+                
             if verbose:
                 print('Testing an initial grid of '+str(gridpars.shape[0])+' spectra')
             # Run FERRE
@@ -959,7 +985,7 @@ def cfit(slist,vrel,cont=1,ncont=0,loggrelation=False,grid='jwstgiant5.dat',
             estimates = gridpars[bestind,:]
         if verbose:
             print('Initial estimates: ',estimates)
-        
+            
         # Run curve_fit
         try:
             pars,pcov = curve_fit(fr.model,pspec['wave'],pspec['flux'],p0=estimates,

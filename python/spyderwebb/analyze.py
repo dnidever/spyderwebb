@@ -392,7 +392,7 @@ def run_doppler(obsid,redtag='red',targfile=None,photfile=None,clobber=False,pay
 
 
 def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont=0,
-              errbar=1,grid='jwstgiant5.dat',save=False,plotsdir=None,plots=True):
+              errbar=1,grid='jwstgiant5b.dat',save=False,plotsdir=None,plots=True):
     """ 
     Run FERRE on list of spectra
 
@@ -525,8 +525,8 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     lines += ["INDV = 1 2 3 4"]
     lines += ["SYNTHFILE(1) = '"+gridbase+"'"]
     lines += ["F_FORMAT = 1"]
-    lines += ["INTER = "+str(inter)]    # cubic Bezier interpolation
-    lines += ["ALGOR = "+str(algor)]    # 1-Nelder-Mead,5-MCMC
+    lines += ["INTER = "+str(inter)]     # cubic Bezier interpolation
+    lines += ["ALGOR = "+str(algor)]     # 1-Nelder-Mead,5-MCMC
     lines += ["INIT = "+str(init)]
     if indini is not None:
         lines += ['INDINI = '+np.array2string(np.array(indini)).strip('[]')]        
@@ -544,9 +544,9 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     lines += ["OFFILE = 'ferre.mdl'"]    # output best-fit models
     lines += ["SFFILE = 'ferre.nrd'"]    # normalized data
     lines += ["NOBJ = "+str(len(slist))]
-    lines += ["CONT = "+str(cont)]      # Running mean normalization
+    lines += ["CONT = "+str(cont)]       # Running mean normalization
     lines += ["NCONT = "+str(ncont)]     # Npixel for running mean
-    lines += ["WINTER = 2"]    # wavelength interpolate the model fluxes
+    lines += ["WINTER = 2"]              # wavelength interpolate the model fluxes
     lines += ["ERRBAR = "+str(errbar)]
     lines += ["/"]
     dln.writelines('input.nml',lines)
@@ -601,7 +601,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         slist1['wave'] = wave
         
     # Put star with maximum npix first
-    #  FERRE uses this to set the maximum pixels for ALL the spectra
+    #  FERRE uses this to set the maximum # of pixels for ALL the spectra
     npixall = [s['npix'] for s in slist]
     maxind = np.argmax(npixall)
     npix = np.max(npixall)
