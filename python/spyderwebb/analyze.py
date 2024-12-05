@@ -437,7 +437,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     ncont : int, optional
        Number for continuum normalization.  If cont=1, then ncont
          gives the polynomial order.  If cont=2, then ncont is the
-         number of segements.  If cont=3, then ncont is the number
+         number of segments.  If cont=3, then ncont is the number
          of pixels for the running mean.
     errbar : int, optional
        Choice of algorithm to compute error bars.
