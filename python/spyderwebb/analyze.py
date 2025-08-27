@@ -14,7 +14,7 @@ import tempfile
 import traceback
 import matplotlib
 import matplotlib.pyplot as plt
-from . import utils
+from . import utils,ferre
 
 cspeed = 2.99792458e5  # speed of light in km/s
 
@@ -126,7 +126,10 @@ def doppler_joint(visitfiles,payne=False,clobber=False,verbose=True):
             hdulist.append(hdu)
         hdulist.writeto(outfile,overwrite=True)
         hdulist.close()
-        
+    except KeyboardInterrupt:
+        # Code to execute when Ctrl+C is pressed
+        print("Program interrupted by user.")
+        return
     except:
         out = None        
         traceback.print_exc()
@@ -493,7 +496,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     username = getpwuid(os.getuid())[0]
     homedir = os.path.expanduser('~'+username)
     gridfile = os.path.join(homedir,'synspec','jwst',grid)
-    ferre = os.path.join(homedir,'projects','ferre','bin','ferre')
+    ferresrc = os.path.join(homedir,'projects','ferre','bin','ferre')
 
     # Set up temporary directory
     tmpdir = tempfile.mkdtemp(prefix='ferre')
@@ -514,15 +517,19 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     print('ERRBAR = ',errbar)
     
     # Create fitting input file
-    gridbase = os.path.basename(gridfile)    
+    gridbase = os.path.basename(gridfile)
+    fr = ferre.FERRE(gridbase)
     os.symlink(gridfile,tmpdir+'/'+gridbase)
     os.symlink(gridfile.replace('.dat','.unf'),tmpdir+'/'+gridbase.replace('.dat','.unf'))
     os.symlink(gridfile.replace('.dat','.hdr'),tmpdir+'/'+gridbase.replace('.dat','.hdr'))
     lines = []
     lines += ["&LISTA"]
-    lines += ["NDIM = 4"]
-    lines += ["NOV = 4"]
-    lines += ["INDV = 1 2 3 4"]
+    lines += ["NDIM = "+str(fr.nlabels)]
+    lines += ["NOV = "+str(fr.nlabels)]
+    lines += ["INDV = "+' '.join((np.arange(fr.nlabels)+1).astype(str))]
+    #lines += ["NDIM = 4"]
+    #lines += ["NOV = 4"]
+    #lines += ["INDV = 1 2 3 4"]
     lines += ["SYNTHFILE(1) = '"+gridbase+"'"]
     lines += ["F_FORMAT = 1"]
     lines += ["INTER = "+str(inter)]     # cubic Bezier interpolation
@@ -628,8 +635,11 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         obswave = ''.join(['{:14.5E}'.format(w) for w in wave])        
         slist[i]['ferre_fline'] = obs
         slist[i]['ferre_eline'] = obserr
-        slist[i]['ferre_wline'] = obswave     
-        slist[i]['ferre_pline'] = 'spec'+str(i+1)+' 4000.0  2.5  -0.5  0.1'
+        slist[i]['ferre_wline'] = obswave
+        sline1 = 'spec'+str(i+1)+' 4000.0  2.5  -0.5  0.1'
+        if fr.nlabels > 4:
+            sline1 += (fr.nlabels-4)*'  0.0'
+        slist[i]['ferre_pline'] = sline1
         slist[i]['ferre_id'] = 'spec'+str(i+1)
         
         flines.append(slist[i]['ferre_fline'])
@@ -648,7 +658,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
     print('Running FERRE on '+str(len(slist))+' spectra')
     try:
         fout = open('ferre.log','w')
-        out = subprocess.call([ferre],stdout=fout,stderr=subprocess.STDOUT)
+        out = subprocess.call([ferresrc],stdout=fout,stderr=subprocess.STDOUT)
         fout.close()
         loglines = dln.readlines('ferre.log')
         #out = subprocess.check_output([ferre])
@@ -656,7 +666,7 @@ def run_ferre(files,vrel,inter=3,algor=1,init=1,indini=None,nruns=1,cont=1,ncont
         fout.close()        
         traceback.print_exc()
         #pass
-
+        
     # Read the output
     olines = dln.readlines('ferre.opf')
     ids = np.char.array([o.split()[0] for o in olines])
