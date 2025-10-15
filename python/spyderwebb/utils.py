@@ -1,9 +1,11 @@
 import os
 import numpy as np
+import time
 from scipy.special import erf
 from functools import wraps
 from scipy import interpolate
 from scipy.ndimage import median_filter,generic_filter
+import gdown
 
 def datadir():
     """ Return the data/ directory."""
@@ -266,7 +268,7 @@ def download_data(force=False):
     
     # Do the downloading
     t0 = time.time()
-    print('Downloading '+str(len(data))+' Doppler data files')
+    print('Downloading '+str(len(data))+' SpyderWebb ANN model files')
     for i in range(len(data)):
         print(str(i+1)+' '+data[i]['output'])
         fileid = data[i]['id']
