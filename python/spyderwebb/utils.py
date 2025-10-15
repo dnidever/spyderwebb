@@ -242,3 +242,39 @@ def is_binaryfile(filename):
             return False
     except UnicodeDecodeError: # Found non-text data
         return True  
+
+def download_data(force=False):
+    """ Download the data from my Google Drive."""
+
+    # Check if the "done" file is there
+    if os.path.exists(datadir()+'done') and force==False:
+        return
+    
+    #https://drive.google.com/drive/folders/1SXId9S9sduor3xUz9Ukfp71E-BhGeGmn?usp=share_link
+    # The entire folder: 1SXId9S9sduor3xUz9Ukfp71E-BhGeGmn
+    
+    data = [{'id':'1MSuaGHMP0QbFfFgCW8TxtF0-D2BEDN2P','output':'ann_3000-3700K_6000-31000A.pkl'},   
+            {'id':'17KGJoyCMcOKwSR8BIEy_UdsIgulCPOQ8','output':'ann_3000-3700K_29000-60000A.pkl'},
+            {'id':'1b1bo9zJ7gHQT2xCLLlw-WrS7uvhRyfN9','output':'ann_3500-4200K_6000-31000A.pkl'},
+            {'id':'1jJsNqCWBTx-FU5P2FdtlsSKxIvvd-KLC','output':'ann_3500-4200K_29000-60000A.pkl'},
+            {'id':'1jBwNxB2wXZQl5-3YsHoZyVMWfAyHJZhy','output':'ann_4000-5000K_6000-31000A.pkl'},
+            {'id':'1lMvZI6Gol3YuzSCbRHF1NUEQYO_t2yEh','output':'ann_4000-5000K_29000-60000A.pkl'},
+            {'id':'1qm6v8zgmZ2werrXO6NmMhTAsrcULlkI-','output':'ann_4900-6000K_6000-31000A.pkl'},
+            {'id':'18p0BcIfZYk5JGv0Zq_jHaYLjPmuzqOi9','output':'ann_4900-6000K_29000-60000A.pkl'}]
+    
+    # This should take 2-3 minutes on a good connection
+    
+    # Do the downloading
+    t0 = time.time()
+    print('Downloading '+str(len(data))+' Doppler data files')
+    for i in range(len(data)):
+        print(str(i+1)+' '+data[i]['output'])
+        fileid = data[i]['id']
+        url = f'https://drive.google.com/uc?id={fileid}'
+        output = datadir()+data[i]['output']  # save to the data directory
+        if os.path.exists(output)==False or force:
+            gdown.download(url, output, quiet=False)
+
+    print('All done in {:.1f} seconds'.format(time.time()-t0))
+
+            
